@@ -1,0 +1,18 @@
+{
+  "default": {
+    "output_dir": "/var/lib/coregate/cores",
+    "metadata_jsonl": "/var/lib/coregate/records.jsonl",
+    "metadata_sqlite": "/var/lib/coregate/records.sqlite",
+    "limit_state_file": "/var/lib/coregate/ratelimit.json",
+    "respect_dumpable": true,
+    "package_lookup": false,
+    "core": {
+      "compression": "zstd",
+      "sparse": false
+    },
+    "rate_limit": {
+      "default_max_per_minute": 100,
+      "rules": []
+    }
+  }
+}

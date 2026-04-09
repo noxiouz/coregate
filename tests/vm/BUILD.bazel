@@ -1,0 +1,51 @@
+load("//bzl:vm_host.bzl", "vm_host")
+load("//bzl:vm_test.bzl", "vm_python_test", "vm_sh_test")
+
+# VM host using the Debian 12 image fetched via http_file in MODULE.bazel.
+# Bazel downloads and caches the ~660MB qcow2 automatically on first use.
+vm_host(
+    name = "debian12",
+    image = "@debian12_vm_image//file",
+    memory_mib = 2048,
+    cpus = 2,
+    visibility = ["//visibility:public"],
+)
+
+# Python test that runs *inside* the VM.
+#
+# guest_setup installs coregate as the core_pattern handler, triggers a
+# SIGSEGV crash, then the Python assertions inspect /var/lib/coregate/.
+#
+# Run:
+#   bazel test //tests/vm:core_pattern_segv
+vm_python_test(
+    name = "core_pattern_segv",
+    srcs = ["test_core_pattern_segv.py"],
+    vm_host = ":debian12",
+    data = [
+        "//crates/cli:coregate",
+        "//crates/victim-crash",
+        "coregate-config.json",
+    ],
+    guest_setup = " && ".join([
+        "install -d -m0755 /etc/coregate /var/lib/coregate /var/lib/coregate/cores",
+        "install -m0644 /usr/local/bin/coregate-config.json /etc/coregate/config.json",
+        "printf '%s' '|/usr/local/bin/coregate handle %P %i %I %s %t %d %E /etc/coregate/config.json' > /proc/sys/kernel/core_pattern",
+        "sysctl -w kernel.core_pipe_limit=16",
+        "ulimit -c unlimited; /usr/local/bin/victim-crash segv || true",
+        "sleep 2",
+    ]),
+    timeout_secs = 300,
+    tags = [
+        "exclusive",
+        "requires-vm",
+    ],
+)
+
+# Example: shell test running inside a VM.
+# vm_sh_test(
+#     name = "smoke_test",
+#     vm_host = ":debian12",
+#     srcs = ["smoke_test.sh"],
+#     timeout_secs = 300,
+# )

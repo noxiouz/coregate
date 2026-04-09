@@ -1,0 +1,51 @@
+module(
+    name = "coregate",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.69.0")
+bazel_dep(name = "rules_shell", version = "0.4.1")
+bazel_dep(name = "rules_python", version = "1.4.1")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.94.0"],
+    extra_target_triples = ["x86_64-unknown-linux-musl"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//:Cargo.lock",
+    manifests = [
+        "//:Cargo.toml",
+        "//crates/cli:Cargo.toml",
+        "//crates/corefile:Cargo.toml",
+        "//crates/kernel:Cargo.toml",
+        "//crates/limit:Cargo.toml",
+        "//crates/meta:Cargo.toml",
+        "//crates/store:Cargo.toml",
+        "//crates/telemetry:Cargo.toml",
+        "//crates/victim-crash:Cargo.toml",
+        "//crates/vmtest:Cargo.toml",
+        "//crates/vmtest-agent:Cargo.toml",
+        "//crates/vmtest-protocol:Cargo.toml",
+        "//crates/xtask:Cargo.toml",
+    ],
+)
+use_repo(crate, "crates")
+
+# VM test images.
+# To update: change the URL and sha256, then `bazel fetch @debian12_vm_image//...`
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_file(
+    name = "debian12_vm_image",
+    urls = ["https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"],
+    sha256 = "30016ae76fc2ab4d2acdfa0c112a8336a1436d30e3ecb9d998c0c5e6059c0cfc",
+    downloaded_file_path = "debian-12-generic-amd64.qcow2",
+)

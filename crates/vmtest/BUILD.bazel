@@ -1,0 +1,29 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+rust_library(
+    name = "vmtest-lib",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/main.rs"],
+    ),
+    crate_name = "vmtest",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        "//crates/vmtest-protocol",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "vmtest",
+    srcs = ["src/main.rs"],
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":vmtest-lib",
+        "//crates/vmtest-protocol",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)
