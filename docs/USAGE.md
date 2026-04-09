@@ -87,7 +87,32 @@ Notes:
 - stack records now carry:
   - best-effort live `blazesym` symbols for the crashing process
   - normalized file-offset metadata suitable for later remote/file-based symbolization
+- remote symbolization can be enabled with:
+  - `"symbolizer": { "mode": "http", "http": { "url": "...", "timeout_ms": 3000 } }`
+- the remote service is expected to symbolize normalized file offsets, for example with `blazesym`
 - current validation was done on Linux `6.6.87.2-microsoft-standard-WSL2`
+
+Remote HTTP contract:
+
+- request:
+  - `provider`
+  - `frames[]`
+    - `addr`
+    - `normalized`
+      - `kind`
+      - `file_offset`
+      - `path`
+      - `build_id`
+      - `reason`
+- response:
+  - `frames[]`
+    - `symbol`
+    - `module`
+    - `offset`
+    - `file`
+    - `line`
+    - `column`
+    - `reason`
 
 ## VM Tests
 

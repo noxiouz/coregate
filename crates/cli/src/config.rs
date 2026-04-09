@@ -54,6 +54,7 @@ pub struct EffectiveConfig {
     pub package_lookup: bool,
     pub core: EffectiveCoreConfig,
     pub rate_limit: RateLimitPolicy,
+    pub symbolizer: EffectiveSymbolizerConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +62,19 @@ pub struct EffectiveCoreConfig {
     pub compression: Compression,
     pub sparse: bool,
     pub min_free_percent: Option<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub enum EffectiveSymbolizerConfig {
+    None,
+    Local,
+    Http(EffectiveHttpSymbolizerConfig),
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectiveHttpSymbolizerConfig {
+    pub url: String,
+    pub timeout_ms: u64,
 }
 
 impl Default for EffectiveConfig {
@@ -78,6 +92,7 @@ impl Default for EffectiveConfig {
                 min_free_percent: None,
             },
             rate_limit: RateLimitPolicy::default(),
+            symbolizer: EffectiveSymbolizerConfig::Local,
         }
     }
 }
@@ -177,6 +192,9 @@ fn apply_collector_config(dst: &mut EffectiveConfig, src: &proto::CollectorConfi
     if let Some(rate_limit) = &src.rate_limit {
         apply_rate_limit(&mut dst.rate_limit, rate_limit)?;
     }
+    if let Some(symbolizer) = &src.symbolizer {
+        apply_symbolizer_config(&mut dst.symbolizer, symbolizer)?;
+    }
     Ok(())
 }
 
@@ -226,6 +244,42 @@ fn apply_rate_limit(dst: &mut RateLimitPolicy, src: &proto::RateLimitPolicy) -> 
     Ok(())
 }
 
+fn apply_symbolizer_config(
+    dst: &mut EffectiveSymbolizerConfig,
+    src: &proto::SymbolizerConfig,
+) -> Result<()> {
+    if let Some(mode) = src.mode {
+        match proto::SymbolizerMode::try_from(mode).context("parse symbolizer mode enum")? {
+            proto::SymbolizerMode::Unspecified => {}
+            proto::SymbolizerMode::SymbolizerNone => *dst = EffectiveSymbolizerConfig::None,
+            proto::SymbolizerMode::SymbolizerLocal => *dst = EffectiveSymbolizerConfig::Local,
+            proto::SymbolizerMode::SymbolizerHttp => {
+                let http = src
+                    .http
+                    .as_ref()
+                    .context("http symbolizer mode requires http config")?;
+                let url = http
+                    .url
+                    .clone()
+                    .context("http symbolizer mode requires url")?;
+                let timeout_ms = u64::from(http.timeout_ms.unwrap_or(5_000));
+                *dst = EffectiveSymbolizerConfig::Http(EffectiveHttpSymbolizerConfig {
+                    url,
+                    timeout_ms,
+                });
+            }
+        }
+    } else if let Some(http) = &src.http {
+        let url = http
+            .url
+            .clone()
+            .context("http symbolizer config requires url")?;
+        let timeout_ms = u64::from(http.timeout_ms.unwrap_or(5_000));
+        *dst = EffectiveSymbolizerConfig::Http(EffectiveHttpSymbolizerConfig { url, timeout_ms });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +290,10 @@ mod tests {
         let root = proto::ConfigRoot {
             default: Some(proto::CollectorConfig {
                 package_lookup: Some(false),
+                symbolizer: Some(proto::SymbolizerConfig {
+                    mode: Some(proto::SymbolizerMode::SymbolizerLocal as i32),
+                    ..Default::default()
+                }),
                 core: Some(proto::CoreConfig {
                     compression: Some(proto::Compression::Zstd as i32),
                     ..Default::default()
@@ -249,6 +307,13 @@ mod tests {
                 }),
                 config: Some(proto::CollectorConfig {
                     package_lookup: Some(true),
+                    symbolizer: Some(proto::SymbolizerConfig {
+                        mode: Some(proto::SymbolizerMode::SymbolizerHttp as i32),
+                        http: Some(proto::HttpSymbolizerConfig {
+                            url: Some("http://127.0.0.1:8080/symbolize".to_string()),
+                            timeout_ms: Some(3_000),
+                        }),
+                    }),
                     core: Some(proto::CoreConfig {
                         compression: Some(proto::Compression::Xz as i32),
                         ..Default::default()
@@ -295,5 +360,12 @@ mod tests {
         let resolved = resolve_config(&root, &metadata).expect("resolve config");
         assert!(resolved.package_lookup);
         assert!(matches!(resolved.core.compression, Compression::Xz));
+        match resolved.symbolizer {
+            EffectiveSymbolizerConfig::Http(http) => {
+                assert_eq!(http.url, "http://127.0.0.1:8080/symbolize");
+                assert_eq!(http.timeout_ms, 3_000);
+            }
+            other => panic!("expected http symbolizer, got {other:?}"),
+        }
     }
 }

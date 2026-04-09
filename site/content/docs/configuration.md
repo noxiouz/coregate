@@ -16,6 +16,7 @@ Current configuration covers:
 - local rate limits
 - JSONL metadata sink
 - optional SQLite metadata sink
+- stack symbolization mode: local, none, or remote HTTP
 
 ## Example
 
@@ -26,6 +27,9 @@ Current configuration covers:
     "metadata_jsonl": "/var/lib/coregate/records.jsonl",
     "metadata_sqlite": "/var/lib/coregate/records.sqlite",
     "respect_dumpable": true,
+    "symbolizer": {
+      "mode": "local"
+    },
     "core": {
       "compression": "zstd",
       "sparse": false,
@@ -88,6 +92,14 @@ When `true`, Coregate rejects dumps unless the crashing task is dumpable.
 ### `package_lookup`
 
 When `true`, Coregate tries to resolve package ownership and version through `dpkg` or `rpm`.
+
+### `symbolizer`
+
+Controls post-capture stack symbolization.
+
+- `mode: "none"`: keep raw frames only
+- `mode: "local"`: symbolize in the collector with `blazesym`
+- `mode: "http"`: normalize locally and send the stack to a remote HTTP service
 
 ## `core`
 

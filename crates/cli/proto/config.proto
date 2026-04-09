@@ -35,6 +35,8 @@ message CollectorConfig {
   optional CoreConfig core = 7;
   // Local rate-limit policy.
   optional RateLimitPolicy rate_limit = 8;
+  // Stack symbolization strategy applied after raw frames are captured.
+  optional SymbolizerConfig symbolizer = 9;
 }
 
 // Core-file storage options.
@@ -96,4 +98,31 @@ message Matcher {
   optional string runtime = 3;
   // Exact signal number match, e.g. 11 for SIGSEGV.
   optional int32 signal = 4;
+}
+
+// Post-capture symbolization strategy for stack frames.
+message SymbolizerConfig {
+  // Selected symbolization mode.
+  optional SymbolizerMode mode = 1;
+  // HTTP backend configuration used when `mode` is `HTTP`.
+  optional HttpSymbolizerConfig http = 2;
+}
+
+enum SymbolizerMode {
+  // Leave the current/default setting unchanged.
+  SYMBOLIZER_MODE_UNSPECIFIED = 0;
+  // Do not symbolize stack frames at all.
+  SYMBOLIZER_NONE = 1;
+  // Symbolize locally in the collector process.
+  SYMBOLIZER_LOCAL = 2;
+  // Normalize locally and send frames to a remote HTTP service.
+  SYMBOLIZER_HTTP = 3;
+}
+
+// Simple HTTP JSON symbolizer backend.
+message HttpSymbolizerConfig {
+  // Endpoint that accepts a POST body shaped like the normalized stack record.
+  optional string url = 1;
+  // Request timeout in milliseconds.
+  optional uint32 timeout_ms = 2;
 }

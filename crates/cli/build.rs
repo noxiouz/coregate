@@ -8,6 +8,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "coregate.config.RateLimitRule",
         "coregate.config.ConfigOverride",
         "coregate.config.Matcher",
+        "coregate.config.SymbolizerConfig",
+        "coregate.config.HttpSymbolizerConfig",
     ] {
         config.type_attribute(
             message,
@@ -16,6 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     config.type_attribute(
         "coregate.config.Compression",
+        "#[derive(serde::Serialize, serde::Deserialize)] #[serde(rename_all = \"snake_case\")]",
+    );
+    config.type_attribute(
+        "coregate.config.SymbolizerMode",
         "#[derive(serde::Serialize, serde::Deserialize)] #[serde(rename_all = \"snake_case\")]",
     );
     config.field_attribute(

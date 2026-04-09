@@ -45,3 +45,50 @@ sudo cargo run -p coregate-bpf -- remove
 - live symbolization requires the crashing process to still be present in `/proc`
 - normalized file-offset metadata is intended for later file-based or remote symbolization
 - if symbolization fails, Coregate still keeps the raw frame addresses
+
+## Remote symbolizer mode
+
+Coregate can skip live process symbolization and send normalized frames to a
+remote HTTP service instead.
+
+The remote service is expected to resolve normalized file offsets, for example
+by using `blazesym` against the referenced ELF path.
+
+Example config:
+
+```json
+{
+  "default": {
+    "symbolizer": {
+      "mode": "http",
+      "http": {
+        "url": "http://127.0.0.1:8080/symbolize",
+        "timeout_ms": 3000
+      }
+    }
+  }
+}
+```
+
+Request shape:
+
+- `provider`
+- `frames[]`
+  - `addr`
+  - `normalized`
+    - `kind`
+    - `file_offset`
+    - `path`
+    - `build_id`
+    - `reason`
+
+Response shape:
+
+- `frames[]`
+  - `symbol`
+  - `module`
+  - `offset`
+  - `file`
+  - `line`
+  - `column`
+  - `reason`

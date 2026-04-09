@@ -6,6 +6,9 @@
     "limit_state_file": "/var/lib/coregate/ratelimit.json",
     "respect_dumpable": true,
     "package_lookup": false,
+    "symbolizer": {
+      "mode": "local"
+    },
     "core": {
       "compression": "zstd",
       "sparse": false,
@@ -28,7 +31,14 @@
         "runtime": "python"
       },
       "config": {
-        "package_lookup": true
+        "package_lookup": true,
+        "symbolizer": {
+          "mode": "http",
+          "http": {
+            "url": "http://127.0.0.1:8080/symbolize",
+            "timeout_ms": 3000
+          }
+        }
       }
     }
   ]

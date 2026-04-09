@@ -8,7 +8,11 @@ use collector_limit::{Decision, check_and_consume_with_file};
 use collector_meta::{CrashMetadata, collect_basic, enrich_from_binary};
 use collector_store::{CrashRecord, DumpRecord, TelemetryRecord, append_json_line};
 use collector_telemetry::StageTimer;
-use coregate_bpf_stack::{read_pinned_stack, read_pinned_stats, symbolize_stack_record};
+use coregate_bpf_stack::{
+    RemoteSymbolizationResponse, apply_remote_symbolization, build_remote_symbolization_request,
+    normalize_stack_record, read_pinned_stack, read_pinned_stats, symbolize_stack_record,
+};
+use reqwest::blocking::Client;
 use std::fs;
 use std::io::{self, Read};
 use std::mem::size_of;
@@ -18,7 +22,7 @@ use std::path::PathBuf;
 
 #[cfg(feature = "sqlite")]
 use collector_store::insert_sqlite;
-use config::{EffectiveConfig, load_config_root, resolve_config};
+use config::{EffectiveConfig, EffectiveSymbolizerConfig, load_config_root, resolve_config};
 
 const HANDLE_CORE_PATTERN_ARGS: &str = "handle %P %i %I %s %t %d %E";
 const DEFAULT_CONFIG_PATH: &str = "/etc/coregate/config.json";
@@ -525,7 +529,7 @@ fn process_dump<R: Read>(
         Ok(pid) => match read_pinned_stack(pid, true) {
             Ok(mut stack) => {
                 if let Some(stack_record) = stack.as_mut() {
-                    if let Err(err) = symbolize_stack_record(pid, stack_record) {
+                    if let Err(err) = symbolize_bpf_stack(&config, pid, stack_record) {
                         eprintln!(
                             "coregate: failed to symbolize pinned BPF stack for pid {}: {err:#}",
                             request.pid
@@ -570,6 +574,36 @@ fn process_dump<R: Read>(
     timer.end("store_record");
 
     Ok(())
+}
+
+fn symbolize_bpf_stack(
+    config: &EffectiveConfig,
+    pid: u32,
+    stack: &mut coregate_bpf_stack::StackRecord,
+) -> Result<()> {
+    match &config.symbolizer {
+        EffectiveSymbolizerConfig::None => Ok(()),
+        EffectiveSymbolizerConfig::Local => symbolize_stack_record(pid, stack),
+        EffectiveSymbolizerConfig::Http(http) => {
+            normalize_stack_record(pid, stack).context("prepare remote symbolization input")?;
+            let request = build_remote_symbolization_request(stack);
+            let client = Client::builder()
+                .timeout(std::time::Duration::from_millis(http.timeout_ms))
+                .build()
+                .context("build http symbolizer client")?;
+            let response = client
+                .post(&http.url)
+                .json(&request)
+                .send()
+                .and_then(|response| response.error_for_status())
+                .context("send remote symbolization request")?
+                .json::<RemoteSymbolizationResponse>()
+                .context("decode remote symbolization response")?;
+            apply_remote_symbolization(stack, response)
+                .context("apply remote symbolization response")?;
+            Ok(())
+        }
+    }
 }
 
 fn evaluate_decision(config: &EffectiveConfig, metadata: &CrashMetadata) -> Decision {
@@ -1087,6 +1121,16 @@ fn coredump_signal_from_info(info: &CoregatePidfdInfo) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use coregate_bpf_stack::{
+        NormalizedFrame, RemoteSymbolizationRequest, StackFrame, StackRecord,
+        symbolize_remote_request_with_blazesym,
+    };
+    use std::io::Write as _;
+    use std::net::TcpListener;
+    use std::thread;
+
+    #[inline(never)]
+    fn marker_function_for_http_test() {}
 
     #[test]
     fn renders_handle_setup_pattern() {
@@ -1144,5 +1188,90 @@ mod tests {
         let pattern = format!("|/{}", "x".repeat(128));
         let err = ensure_core_pattern_len(&pattern).unwrap_err();
         assert!(err.to_string().contains("kernel limit is 127 bytes"));
+    }
+
+    #[test]
+    fn http_symbolizer_wraps_blazesym() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut content_length = 0usize;
+
+            let header_end = loop {
+                let mut chunk = [0u8; 1024];
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let header_end = pos + 4;
+                    let headers = std::str::from_utf8(&buf[..pos + 4]).unwrap();
+                    for line in headers.lines() {
+                        let lower = line.to_ascii_lowercase();
+                        if let Some(value) = lower.strip_prefix("content-length:") {
+                            content_length = value.trim().parse::<usize>().unwrap();
+                        }
+                    }
+                    break header_end;
+                }
+            };
+            while buf.len() < header_end + content_length {
+                let mut chunk = [0u8; 1024];
+                let n = stream.read(&mut chunk).unwrap();
+                assert!(n > 0);
+                buf.extend_from_slice(&chunk[..n]);
+            }
+
+            let body = &buf[header_end..header_end + content_length];
+            let request: RemoteSymbolizationRequest = serde_json::from_slice(body).unwrap();
+            let response = symbolize_remote_request_with_blazesym(&request).unwrap();
+            let payload = serde_json::to_vec(&response).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            )
+            .unwrap();
+            stream.write_all(&payload).unwrap();
+        });
+
+        let mut stack = StackRecord {
+            provider: "bpf".to_string(),
+            frames: vec![StackFrame {
+                addr: marker_function_for_http_test as *const () as usize as u64,
+                symbol: None,
+                module: None,
+                offset: None,
+                file: None,
+                line: None,
+                column: None,
+                reason: None,
+                normalized: Some(NormalizedFrame {
+                    kind: "elf".to_string(),
+                    file_offset: 0,
+                    path: None,
+                    build_id: None,
+                    reason: None,
+                }),
+            }],
+        };
+
+        coregate_bpf_stack::normalize_stack_record(std::process::id(), &mut stack).unwrap();
+
+        let mut config = EffectiveConfig::default();
+        config.symbolizer =
+            config::EffectiveSymbolizerConfig::Http(config::EffectiveHttpSymbolizerConfig {
+                url: format!("http://{addr}/symbolize"),
+                timeout_ms: 3_000,
+            });
+
+        symbolize_bpf_stack(&config, std::process::id(), &mut stack).unwrap();
+        server.join().unwrap();
+
+        let frame = &stack.frames[0];
+        assert!(frame.symbol.is_some(), "{frame:?}");
+        assert!(frame.normalized.is_some(), "{frame:?}");
     }
 }
