@@ -14,18 +14,26 @@ enableRobotsTXT = true
 
 [menu]
   [[menu.main]]
-    name = 'Docs'
-    pageRef = '/docs'
+    name = 'Features'
+    url = '/#features'
     weight = 10
   [[menu.main]]
-    name = 'Quickstart'
-    pageRef = '/docs/quickstart'
+    name = 'How It Works'
+    url = '/#how-it-works'
     weight = 20
   [[menu.main]]
-    name = 'Testing'
-    pageRef = '/docs/testing'
+    name = 'Commands'
+    url = '/#commands'
     weight = 30
+  [[menu.main]]
+    name = 'Install'
+    url = '/#install'
+    weight = 35
+  [[menu.main]]
+    name = 'Docs'
+    pageRef = '/docs'
+    weight = 40
   [[menu.main]]
     name = 'GitHub'
     url = 'https://github.com/noxiouz/coregate'
-    weight = 40
+    weight = 50
