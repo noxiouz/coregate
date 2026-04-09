@@ -59,8 +59,11 @@ pub fn collect_basic(pid: i32, tid: Option<i32>) -> Result<CrashMetadata> {
         captured_at: Utc::now(),
         pid,
         tid,
-        ns_pid: read_status_value(pid, "NSpid:")
-            .and_then(|v| v.split_whitespace().last().and_then(|s| s.parse::<i32>().ok())),
+        ns_pid: read_status_value(pid, "NSpid:").and_then(|v| {
+            v.split_whitespace()
+                .last()
+                .and_then(|s| s.parse::<i32>().ok())
+        }),
         pid_initial_ns: None,
         tid_initial_ns: None,
         comm: read_process_comm(pid).ok(),
@@ -148,8 +151,8 @@ fn read_status_id(pid: i32, key: &str) -> Result<u32> {
 }
 
 fn read_coredump_filter(pid: i32) -> Result<String> {
-    let raw =
-        fs::read_to_string(format!("/proc/{pid}/coredump_filter")).context("read coredump_filter")?;
+    let raw = fs::read_to_string(format!("/proc/{pid}/coredump_filter"))
+        .context("read coredump_filter")?;
     Ok(raw.trim().to_string())
 }
 
@@ -169,7 +172,12 @@ fn read_rlimit_core(pid: i32) -> Result<String> {
 fn read_cgroup(pid: i32) -> Result<String> {
     let raw = fs::read_to_string(format!("/proc/{pid}/cgroup")).context("read cgroup")?;
     let line = raw.lines().next().unwrap_or_default();
-    let group = line.rsplit(':').next().unwrap_or_default().trim().to_string();
+    let group = line
+        .rsplit(':')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     Ok(group)
 }
 
@@ -196,7 +204,11 @@ fn read_arch() -> Result<String> {
             .find_map(|line| line.split_once(':').map(|(k, v)| (k.trim(), v.trim())))
             .filter(|(k, _)| *k == "Architecture")
             .map(|(_, v)| v.to_string())
-            .or_else(|| std::env::consts::ARCH.strip_prefix("").map(ToString::to_string))
+            .or_else(|| {
+                std::env::consts::ARCH
+                    .strip_prefix("")
+                    .map(ToString::to_string)
+            })
             .context("missing architecture")?;
         Ok(arch)
     })
@@ -208,7 +220,9 @@ fn read_uname() -> Result<String> {
     let release = read_uname_field("/proc/sys/kernel/osrelease")?;
     let version = read_uname_field("/proc/sys/kernel/version")?;
     let machine = read_arch()?;
-    Ok(format!("{sysname} {nodename} {release} {version} {machine}"))
+    Ok(format!(
+        "{sysname} {nodename} {release} {version} {machine}"
+    ))
 }
 
 fn read_uname_field(path: &str) -> Result<String> {
@@ -345,17 +359,18 @@ fn lookup_dpkg_version(path: &Path) -> Result<Option<String>> {
 
 fn lookup_rpm_version(path: &Path) -> Result<Option<String>> {
     let out = Command::new("rpm")
-        .args(["-qf", &path.to_string_lossy(), "--qf", "%{NAME}-%{VERSION}-%{RELEASE}"])
+        .args([
+            "-qf",
+            &path.to_string_lossy(),
+            "--qf",
+            "%{NAME}-%{VERSION}-%{RELEASE}",
+        ])
         .output();
 
     let value = match out {
         Ok(o) if o.status.success() => {
             let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if v.is_empty() {
-                None
-            } else {
-                Some(v)
-            }
+            if v.is_empty() { None } else { Some(v) }
         }
         _ => None,
     };

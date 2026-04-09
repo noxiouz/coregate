@@ -37,7 +37,13 @@ pub fn write_core<R: Read>(reader: &mut R, opts: &CoreWriteOptions) -> Result<Co
     let mount_root = &opts.output_dir;
 
     let write_result = match opts.compression {
-        Compression::None => write_uncompressed(reader, &path, mount_root, opts.sparse, opts.min_free_percent),
+        Compression::None => write_uncompressed(
+            reader,
+            &path,
+            mount_root,
+            opts.sparse,
+            opts.min_free_percent,
+        ),
         Compression::Zstd => write_zstd(reader, &path, mount_root, opts.min_free_percent),
         Compression::Xz => write_xz(reader, &path, mount_root, opts.min_free_percent),
     };

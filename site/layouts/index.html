@@ -3,7 +3,7 @@
     <div class="hero-copy">
       <p class="eyebrow">Rust coredump collection for Linux</p>
       <h1>Collect coredumps. Keep the hot path short.</h1>
-      <p class="lede">Coregate captures Linux coredumps through `core_pattern`, legacy socket delivery, and protocol socket delivery. It extracts metadata worth querying, stores dumps with explicit policy, and validates the real kernel path inside QEMU.</p>
+      <p class="lede">Coregate captures Linux coredumps through `core_pattern`, legacy socket delivery, and protocol socket delivery. It extracts metadata worth querying, stores dumps with explicit policy, and can enrich records with BPF-captured user stacks.</p>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/docs/quickstart/" | relURL }}">Read the Quickstart</a>
         <a class="button button-secondary" href="{{ "/docs/" | relURL }}">Documentation</a>
@@ -14,24 +14,23 @@
         <span></span><span></span><span></span>
       </div>
 <pre><code>$ sudo coregate setup handle --apply
-$ sudo coregate setup server-legacy --apply
-$ sudo coregate setup server --apply
+$ sudo coregate-bpf install --force
+$ sudo coregate serve --apply-sysctl
 
-$ cargo run -p xtask -- vmtest run --scenario all
+$ sudo coregate -- debug-bpf-stats --json
 
 coregate v0.1.0
-[guest] installed core_pattern handler
-[guest] triggered SIGSEGV in crash-worker
 [collector] stored file:///var/lib/coregate/cores/20260409T...
+[collector] captured 8 BPF frames
 [collector] wrote JSONL + SQLite metadata
-[vmtest] scenario core-pattern-segv passed</code></pre>
+[collector] dump.reason=stored</code></pre>
     </div>
   </section>
 
   <section class="section-intro" id="features">
     <p class="eyebrow">Why Coregate</p>
     <h2>Focused on the real coredump path.</h2>
-    <p class="lede">The tool is opinionated where it should be: fast intake first, explicit kernel mode support, queryable metadata, and end-to-end validation against real guests instead of mocked inputs.</p>
+    <p class="lede">The tool is opinionated where it should be: fast intake first, explicit kernel mode support, queryable metadata, optional BPF stack enrichment, and storage policy that does not leave disk pressure to chance.</p>
   </section>
 
   <section class="feature-grid">
@@ -52,12 +51,12 @@ coregate v0.1.0
       <p>Sparse or compressed core files, free-space protection, local JSONL records, and optional SQLite indexing.</p>
     </div>
     <div class="feature-card">
-      <h3>Kernel-version aware</h3>
-      <p>`coregate setup` refuses unsupported socket modes based on the running kernel version instead of printing invalid setup commands.</p>
+      <h3>BPF stack capture</h3>
+      <p>Optional `do_coredump` tracing stores raw user frames, adds best-effort live `blazesym` symbols, and records normalized offsets for later symbolization.</p>
     </div>
     <div class="feature-card">
-      <h3>VM-backed validation</h3>
-      <p>QEMU scenarios exercise real crashes in Debian guests with explicit kernel selection for `@` and `@@` protocol coverage.</p>
+      <h3>Kernel-version aware</h3>
+      <p>`coregate setup` refuses unsupported socket modes based on the running kernel version instead of printing invalid setup commands.</p>
     </div>
   </section>
 
@@ -77,19 +76,21 @@ coregate setup server</code></pre>
     </div>
     <div class="step-card">
       <span class="step-num">2</span>
-      <h3>Store the right artifacts</h3>
-      <p>Configure compression, sparse writes, SQLite indexing, and a minimum free-space reserve to prevent dump storms from filling disks.</p>
+      <h3>Set storage and policy</h3>
+      <p>Configure compression, sparse writes, SQLite indexing, ordered overrides, and a minimum free-space reserve to prevent dump storms from filling disks.</p>
       <pre><code>{
-  "core": { "compression": "zstd" },
-  "metadata_sqlite": "/var/lib/coregate/records.sqlite"
+  "default": {
+    "core": { "compression": "zstd" },
+    "metadata_sqlite": "/var/lib/coregate/records.sqlite"
+  }
 }</code></pre>
     </div>
     <div class="step-card">
       <span class="step-num">3</span>
-      <h3>Validate it in a VM</h3>
-      <p>Run scenario-based guest tests that trigger real crashes and assert on the produced metadata and stored core files.</p>
-      <pre><code>cargo run -p xtask -- vmtest run --scenario all
-cargo run -p xtask -- vmtest run --scenario server-segv</code></pre>
+      <h3>Optionally enable BPF stacks</h3>
+      <p>Install the pinned tracer if you want crash records to include captured user frames and symbolization metadata.</p>
+      <pre><code>sudo coregate-bpf install --force
+sudo coregate -- debug-bpf-stats --json</code></pre>
     </div>
   </section>
 
@@ -111,13 +112,13 @@ cargo run -p xtask -- vmtest run --scenario server-segv</code></pre>
     </div>
     <div class="command-card">
       <h3>Protocol socket mode</h3>
-      <pre><code>sudo coregate setup server</code></pre>
+      <pre><code>sudo coregate serve --apply-sysctl</code></pre>
       <p>Enables `@@/path.sock` on Linux 6.19 and newer.</p>
     </div>
     <div class="command-card">
-      <h3>VM scenarios</h3>
-      <pre><code>cargo run -p xtask -- vmtest run --scenario thread-crash</code></pre>
-      <p>Exercises the guest path end to end.</p>
+      <h3>BPF tracer</h3>
+      <pre><code>sudo coregate-bpf install --force</code></pre>
+      <p>Loads and pins the `do_coredump` stack tracer.</p>
     </div>
   </section>
 
@@ -125,12 +126,13 @@ cargo run -p xtask -- vmtest run --scenario server-segv</code></pre>
     <div>
       <p class="eyebrow">Install</p>
       <h2>Build locally and start with the docs.</h2>
-      <p class="lede">Coregate is currently built from source. The docs cover setup, configuration, and VM-backed testing in one place.</p>
+      <p class="lede">Coregate is currently built from source. The docs cover installation, kernel setup, optional BPF stack capture, and configuration in one place.</p>
     </div>
     <div class="install-actions">
       <pre><code>cargo build -p coregate
+cargo build -p coregate-bpf
 cargo test -p coregate
-cargo run -p xtask -- vmtest fetch-image</code></pre>
+sudo cargo run -p coregate -- setup handle --apply</code></pre>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/docs/quickstart/" | relURL }}">Get Started</a>
         <a class="button button-secondary" href="{{ .Site.Params.repo }}">GitHub</a>

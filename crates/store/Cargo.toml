@@ -13,6 +13,7 @@ anyhow.workspace = true
 collector-core = { path = "../corefile" }
 collector-limit = { path = "../limit" }
 collector-meta = { path = "../meta" }
+coregate-bpf-stack = { path = "../bpf-stack" }
 fs2 = "0.4"
 rusqlite = { workspace = true, optional = true }
 serde.workspace = true

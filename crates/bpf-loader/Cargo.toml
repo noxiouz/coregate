@@ -1,0 +1,15 @@
+[package]
+name = "coregate-bpf"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+libbpf-rs.workspace = true
+coregate-bpf-stack = { path = "../bpf-stack" }
+
+[build-dependencies]
+libbpf-cargo.workspace = true

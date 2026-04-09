@@ -5,6 +5,7 @@
 ```bash
 cargo build -p coregate
 cargo build -p coregate --no-default-features
+cargo build -p coregate-bpf
 ```
 
 ## Handle Mode
@@ -43,6 +44,50 @@ Notes:
 - protocol socket default: `@@/run/coregate-coredump.socket`
 - `setup server-legacy` requires Linux `>= 6.16`
 - `setup server` requires Linux `>= 6.19`
+
+## BPF Stack Tracer
+
+How it works:
+
+- a separate `coregate-bpf` utility attaches `kprobe/do_coredump`
+- the BPF program stores up to 32 user return addresses in a pinned LRU map keyed by global pid/tgid
+- `coregate` reads and deletes that entry during crash handling
+- user space then adds best-effort `blazesym` symbols plus normalized file offsets for later remote symbolization
+
+Install the pinned tracer objects:
+
+```bash
+sudo cargo run -p coregate-bpf -- install
+```
+
+Replace existing pinned objects:
+
+```bash
+sudo cargo run -p coregate-bpf -- install --force
+```
+
+Inspect tracer state:
+
+```bash
+sudo cargo run -p coregate -- debug-bpf-stats --json
+sudo cargo run -p coregate -- debug-bpf-stack <pid> --json
+```
+
+Remove the pinned tracer objects:
+
+```bash
+sudo cargo run -p coregate-bpf -- remove
+```
+
+Notes:
+
+- BPF objects are pinned under `/sys/fs/bpf/coregate`
+- the tracer captures up to 32 raw user-space return addresses keyed by global pid/tgid
+- `coregate` reads and deletes the stack entry after a successful lookup
+- stack records now carry:
+  - best-effort live `blazesym` symbols for the crashing process
+  - normalized file-offset metadata suitable for later remote/file-based symbolization
+- current validation was done on Linux `6.6.87.2-microsoft-standard-WSL2`
 
 ## VM Tests
 

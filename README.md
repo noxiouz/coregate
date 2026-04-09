@@ -16,6 +16,7 @@ Current capabilities include:
 - metadata extraction from `/proc` and ELF data
 - JSONL output and optional SQLite indexing
 - compressed or sparse core storage
+- optional BPF-based stack capture from `do_coredump`
 - local rate limiting and dumpability checks
 - QEMU-backed VM integration tests for real kernel delivery paths
 

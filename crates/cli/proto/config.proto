@@ -2,54 +2,98 @@ syntax = "proto3";
 
 package coregate.config;
 
+// Root configuration object parsed from JSON.
+//
+// Effective configuration is built as:
+// 1. built-in defaults
+// 2. `default`
+// 3. every matching entry in `overrides`, in listed order
+// 4. later matching overrides win
 message ConfigRoot {
+  // Baseline configuration applied to every crash.
   optional CollectorConfig default = 1;
+  // Ordered override list matched against collected crash metadata.
   repeated ConfigOverride overrides = 2;
 }
 
+// Main collector configuration.
 message CollectorConfig {
+  // Directory used for stored core files.
   optional string output_dir = 1;
+  // JSONL file used for append-only crash records.
   optional string metadata_jsonl = 2;
+  // Optional SQLite file used for indexed crash records.
+  // Use an empty string to disable SQLite explicitly.
   optional string metadata_sqlite = 3;
+  // Local state file used by the persistent rate limiter.
   optional string limit_state_file = 4;
+  // When true, reject dumps unless the crashing task is dumpable.
   optional bool respect_dumpable = 5;
+  // When true, try to resolve package ownership/version via dpkg or rpm.
   optional bool package_lookup = 6;
+  // Core-file storage policy.
   optional CoreConfig core = 7;
+  // Local rate-limit policy.
   optional RateLimitPolicy rate_limit = 8;
 }
 
+// Core-file storage options.
 message CoreConfig {
+  // Compression used for stored core files.
   optional Compression compression = 1;
+  // When true, store uncompressed files sparsely where possible.
   optional bool sparse = 2;
+  // Minimum percent of free space that must remain on the target filesystem.
+  // If writing the core would violate this reserve, core storage is refused.
   optional uint32 min_free_percent = 3;
 }
 
+// Compression format used for stored core files.
 enum Compression {
+  // Leave the current/default setting unchanged.
   COMPRESSION_UNSPECIFIED = 0;
+  // Store the core without compression.
   NONE = 1;
+  // Store the core with Zstandard compression.
   ZSTD = 2;
+  // Store the core with XZ compression.
   XZ = 3;
 }
 
+// Per-machine rate limiting.
 message RateLimitPolicy {
+  // Default limit applied when no rule matches.
   optional uint32 default_max_per_minute = 1;
+  // Optional per-binary/per-cgroup overrides.
   repeated RateLimitRule rules = 2;
 }
 
+// Single local rate-limit rule.
 message RateLimitRule {
+  // Exact binary name match, e.g. "python3" or "my-daemon".
   optional string binary = 1;
+  // Prefix match against the collected cgroup path.
   optional string cgroup_prefix = 2;
+  // Maximum number of allowed dumps per minute for matching crashes.
   optional uint32 max_per_minute = 3;
 }
 
+// Override block applied when `matcher` matches the crash metadata.
 message ConfigOverride {
+  // Match criteria. If omitted, this override matches every crash.
   optional Matcher matcher = 1;
+  // Configuration merged on top of the current effective config.
   optional CollectorConfig config = 2;
 }
 
+// Metadata matcher used for overrides.
 message Matcher {
+  // Exact binary name match.
   optional string binary_name = 1;
+  // Prefix match against the collected cgroup path.
   optional string cgroup_prefix = 2;
+  // Exact runtime classification match, e.g. "python" or "native".
   optional string runtime = 3;
+  // Exact signal number match, e.g. 11 for SIGSEGV.
   optional int32 signal = 4;
 }

@@ -8,6 +8,7 @@ use collector_limit::{Decision, check_and_consume_with_file};
 use collector_meta::{CrashMetadata, collect_basic, enrich_from_binary};
 use collector_store::{CrashRecord, DumpRecord, TelemetryRecord, append_json_line};
 use collector_telemetry::StageTimer;
+use coregate_bpf_stack::{read_pinned_stack, read_pinned_stats, symbolize_stack_record};
 use std::fs;
 use std::io::{self, Read};
 use std::mem::size_of;
@@ -37,6 +38,8 @@ enum Commands {
     Handle(HandleArgs),
     Serve(ServeArgs),
     ServeLegacy(ServeLegacyArgs),
+    DebugBpfStack(DebugBpfStackArgs),
+    DebugBpfStats(DebugBpfStatsArgs),
     Setup(SetupArgs),
 }
 
@@ -121,6 +124,24 @@ struct SetupArgs {
     apply: bool,
 }
 
+#[derive(Debug, Parser)]
+struct DebugBpfStackArgs {
+    #[arg(value_name = "PID")]
+    pid: u32,
+
+    #[arg(long)]
+    keep: bool,
+
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct DebugBpfStatsArgs {
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum SetupMode {
     Handle,
@@ -154,8 +175,85 @@ fn run() -> Result<()> {
         Commands::Handle(args) => run_handle(args),
         Commands::Serve(args) => run_serve(args),
         Commands::ServeLegacy(args) => run_serve_legacy(args),
+        Commands::DebugBpfStack(args) => run_debug_bpf_stack(args),
+        Commands::DebugBpfStats(args) => run_debug_bpf_stats(args),
         Commands::Setup(args) => run_setup(args),
     }
+}
+
+fn run_debug_bpf_stack(args: DebugBpfStackArgs) -> Result<()> {
+    let mut stack = read_pinned_stack(args.pid, !args.keep)
+        .with_context(|| format!("read pinned BPF stack for pid {}", args.pid))?;
+
+    if let Some(stack_record) = stack.as_mut() {
+        if let Err(err) = symbolize_stack_record(args.pid, stack_record) {
+            eprintln!(
+                "coregate: failed to symbolize pinned BPF stack for pid {}: {err:#}",
+                args.pid
+            );
+        }
+    }
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&stack).context("serialize BPF stack")?
+        );
+        return Ok(());
+    }
+
+    match stack {
+        Some(stack) => {
+            println!("provider: {}", stack.provider);
+            println!("frames: {}", stack.frames.len());
+            for (idx, frame) in stack.frames.iter().enumerate() {
+                match &frame.symbol {
+                    Some(symbol) => println!(
+                        "{idx:02}: 0x{:016x} {}{}",
+                        frame.addr,
+                        symbol,
+                        frame
+                            .offset
+                            .map(|offset| format!("+0x{offset:x}"))
+                            .unwrap_or_default()
+                    ),
+                    None => println!("{idx:02}: 0x{:016x}", frame.addr),
+                }
+            }
+        }
+        None => {
+            println!("no pinned BPF stack entry for pid {}", args.pid);
+        }
+    }
+
+    Ok(())
+}
+
+fn run_debug_bpf_stats(args: DebugBpfStatsArgs) -> Result<()> {
+    let stats = read_pinned_stats().context("read pinned BPF tracer stats")?;
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&stats).context("serialize BPF tracer stats")?
+        );
+        return Ok(());
+    }
+
+    match stats {
+        Some(stats) => {
+            println!("hits: {}", stats.hits);
+            println!("captured: {}", stats.captured);
+            println!("last_tgid: {}", stats.last_tgid);
+            println!("last_count: {}", stats.last_count);
+            println!("last_stack_result: {}", stats.last_stack_result);
+        }
+        None => {
+            println!("no pinned BPF tracer stats");
+        }
+    }
+
+    Ok(())
 }
 
 fn run_setup(args: SetupArgs) -> Result<()> {
@@ -241,9 +339,15 @@ fn run_serve(args: ServeArgs) -> Result<()> {
     ensure_core_pattern_len(&pattern)?;
     if args.apply_sysctl {
         write_sysctl("/proc/sys/kernel/core_pattern", &pattern)?;
-        write_sysctl("/proc/sys/kernel/core_pipe_limit", &args.core_pipe_limit.to_string())?;
+        write_sysctl(
+            "/proc/sys/kernel/core_pipe_limit",
+            &args.core_pipe_limit.to_string(),
+        )?;
     }
-    eprintln!("coregate: listening for 6.19 coredumps on {}", socket_path.display());
+    eprintln!(
+        "coregate: listening for 6.19 coredumps on {}",
+        socket_path.display()
+    );
     eprintln!("coregate: kernel.core_pattern should be {}", pattern);
 
     loop {
@@ -255,22 +359,31 @@ fn run_serve(args: ServeArgs) -> Result<()> {
 }
 
 fn run_serve_legacy(args: ServeLegacyArgs) -> Result<()> {
-    let socket_path = legacy_server_socket_path(&args.socket_address)?
-        .context("server-legacy mode requires a socket address of the form '@/absolute/path.sock'")?;
+    let socket_path = legacy_server_socket_path(&args.socket_address)?.context(
+        "server-legacy mode requires a socket address of the form '@/absolute/path.sock'",
+    )?;
     let listener = bind_stream_coredump_listener(&socket_path)
         .with_context(|| format!("bind legacy coredump listener at {}", socket_path.display()))?;
     let pattern = render_server_legacy_pattern(Some(&args.socket_address))?;
     ensure_core_pattern_len(&pattern)?;
     if args.apply_sysctl {
         write_sysctl("/proc/sys/kernel/core_pattern", &pattern)?;
-        write_sysctl("/proc/sys/kernel/core_pipe_limit", &args.core_pipe_limit.to_string())?;
+        write_sysctl(
+            "/proc/sys/kernel/core_pipe_limit",
+            &args.core_pipe_limit.to_string(),
+        )?;
     }
-    eprintln!("coregate: listening for 6.16 coredumps on {}", socket_path.display());
+    eprintln!(
+        "coregate: listening for 6.16 coredumps on {}",
+        socket_path.display()
+    );
     eprintln!("coregate: kernel.core_pattern should be {}", pattern);
 
     loop {
         eprintln!("coregate: waiting for legacy coredump connection");
-        let (conn, _) = listener.accept().context("accept legacy coredump connection")?;
+        let (conn, _) = listener
+            .accept()
+            .context("accept legacy coredump connection")?;
         eprintln!("coregate: accepted legacy coredump connection");
         if let Err(err) = handle_legacy_server_connection(args.config.clone(), conn) {
             eprintln!("coregate: failed to handle legacy coredump connection: {err:#}");
@@ -407,10 +520,37 @@ fn process_dump<R: Read>(
     enrich_from_binary(&mut metadata, config.package_lookup);
     timer.end("enrich_metadata");
 
+    timer.start("bpf_stack");
+    let stack = match u32::try_from(request.pid) {
+        Ok(pid) => match read_pinned_stack(pid, true) {
+            Ok(mut stack) => {
+                if let Some(stack_record) = stack.as_mut() {
+                    if let Err(err) = symbolize_stack_record(pid, stack_record) {
+                        eprintln!(
+                            "coregate: failed to symbolize pinned BPF stack for pid {}: {err:#}",
+                            request.pid
+                        );
+                    }
+                }
+                stack
+            }
+            Err(err) => {
+                eprintln!(
+                    "coregate: failed to read pinned BPF stack for pid {}: {err:#}",
+                    request.pid
+                );
+                None
+            }
+        },
+        Err(_) => None,
+    };
+    timer.end("bpf_stack");
+
     timer.start("store_record");
     let record = CrashRecord {
-        schema_version: 1,
+        schema_version: 3,
         metadata,
+        stack,
         core: core_result,
         rate_limit: decision,
         dump,
@@ -462,8 +602,11 @@ fn build_core_filename(pid: i32, signal: Option<i32>, compression: Compression) 
 }
 
 fn is_storage_reserve_refusal(err: &anyhow::Error) -> bool {
-    err.chain()
-        .any(|cause| cause.to_string().contains("refusing to store core: filesystem"))
+    err.chain().any(|cause| {
+        cause
+            .to_string()
+            .contains("refusing to store core: filesystem")
+    })
 }
 
 fn render_rendered_setup(args: &SetupArgs, pattern: &str) -> String {
@@ -479,8 +622,8 @@ fn ensure_setup_kernel_support(mode: SetupMode) -> Result<()> {
         return Ok(());
     };
     let release = current_kernel_release().context("detect running kernel release")?;
-    let running =
-        parse_kernel_version(&release).with_context(|| format!("parse kernel release '{release}'"))?;
+    let running = parse_kernel_version(&release)
+        .with_context(|| format!("parse kernel release '{release}'"))?;
     anyhow::ensure!(
         running >= required,
         "setup mode '{}' requires Linux >= {}.{}; running kernel is {}",
@@ -495,8 +638,14 @@ fn ensure_setup_kernel_support(mode: SetupMode) -> Result<()> {
 fn required_kernel_for_setup(mode: SetupMode) -> Option<KernelVersion> {
     match mode {
         SetupMode::Handle => None,
-        SetupMode::ServerLegacy => Some(KernelVersion { major: 6, minor: 16 }),
-        SetupMode::Server => Some(KernelVersion { major: 6, minor: 19 }),
+        SetupMode::ServerLegacy => Some(KernelVersion {
+            major: 6,
+            minor: 16,
+        }),
+        SetupMode::Server => Some(KernelVersion {
+            major: 6,
+            minor: 19,
+        }),
     }
 }
 
@@ -539,11 +688,18 @@ fn parse_kernel_version(release: &str) -> Result<KernelVersion> {
 }
 
 fn render_handle_pattern(coregate_path: &std::path::Path, config: &std::path::Path) -> String {
-    format!("|{} {} {}", coregate_path.display(), HANDLE_CORE_PATTERN_ARGS, config.display())
+    format!(
+        "|{} {} {}",
+        coregate_path.display(),
+        HANDLE_CORE_PATTERN_ARGS,
+        config.display()
+    )
 }
 
 fn render_server_pattern(socket_address: Option<&str>) -> Result<String> {
-    let socket_address = socket_address.unwrap_or(DEFAULT_SERVER_SOCKET_ADDRESS).trim();
+    let socket_address = socket_address
+        .unwrap_or(DEFAULT_SERVER_SOCKET_ADDRESS)
+        .trim();
     anyhow::ensure!(
         !socket_address.is_empty(),
         "socket mode requires a non-empty --socket-address"
@@ -623,7 +779,10 @@ fn render_shell(pattern: &str, args: &SetupArgs) -> String {
 
 fn apply_setup(args: &SetupArgs, pattern: &str) -> Result<()> {
     write_sysctl("/proc/sys/kernel/core_pattern", pattern)?;
-    if matches!(args.mode, SetupMode::Handle | SetupMode::Server | SetupMode::ServerLegacy) {
+    if matches!(
+        args.mode,
+        SetupMode::Handle | SetupMode::Server | SetupMode::ServerLegacy
+    ) {
         write_sysctl(
             "/proc/sys/kernel/core_pipe_limit",
             &args.core_pipe_limit.to_string(),
@@ -678,11 +837,11 @@ fn bind_stream_coredump_listener(socket_path: &std::path::Path) -> Result<UnixLi
         Ok(()) => {}
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
         Err(err) => {
-            return Err(err).with_context(|| format!("remove stale socket {}", socket_path.display()));
+            return Err(err)
+                .with_context(|| format!("remove stale socket {}", socket_path.display()));
         }
     }
-    UnixListener::bind(socket_path)
-        .with_context(|| format!("bind {}", socket_path.display()))
+    UnixListener::bind(socket_path).with_context(|| format!("bind {}", socket_path.display()))
 }
 
 fn peer_pidfd(fd: RawFd) -> Result<OwnedFd> {
@@ -710,7 +869,9 @@ fn render_server_setup_command(
     config: &std::path::Path,
     core_pipe_limit: u32,
 ) -> Result<String> {
-    let socket_address = socket_address.unwrap_or(DEFAULT_SERVER_SOCKET_ADDRESS).trim();
+    let socket_address = socket_address
+        .unwrap_or(DEFAULT_SERVER_SOCKET_ADDRESS)
+        .trim();
     anyhow::ensure!(
         socket_address.starts_with("@@/"),
         "server socket address must start with '@@/' for protocol coredump mode"
@@ -819,8 +980,9 @@ fn read_coredump_req(fd: RawFd) -> Result<CoredumpReq> {
     };
     let mut read_total = 0usize;
     let req_size = size_of::<CoredumpReq>();
-    let req_buf =
-        unsafe { std::slice::from_raw_parts_mut((&mut req as *mut CoredumpReq).cast::<u8>(), req_size) };
+    let req_buf = unsafe {
+        std::slice::from_raw_parts_mut((&mut req as *mut CoredumpReq).cast::<u8>(), req_size)
+    };
     while read_total < req_size {
         let n = unsafe {
             libc::read(
@@ -872,7 +1034,10 @@ fn send_coredump_ack(fd: RawFd, req: &CoredumpReq, mask: u64) -> Result<()> {
         mask,
     };
     let ack_buf = unsafe {
-        std::slice::from_raw_parts((&ack as *const CoredumpAck).cast::<u8>(), size_of::<CoredumpAck>())
+        std::slice::from_raw_parts(
+            (&ack as *const CoredumpAck).cast::<u8>(),
+            size_of::<CoredumpAck>(),
+        )
     };
     let mut written = 0usize;
     while written < ack_buf.len() {
@@ -959,7 +1124,13 @@ mod tests {
     #[test]
     fn parses_kernel_version_from_release() {
         let parsed = parse_kernel_version("6.19.0-061900-generic").unwrap();
-        assert_eq!(parsed, KernelVersion { major: 6, minor: 19 });
+        assert_eq!(
+            parsed,
+            KernelVersion {
+                major: 6,
+                minor: 19
+            }
+        );
     }
 
     #[test]

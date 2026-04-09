@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use collector_core::CoreWriteResult;
 use collector_limit::Decision;
 use collector_meta::CrashMetadata;
+use coregate_bpf_stack::StackRecord;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -15,6 +16,7 @@ use rusqlite::{Connection, params};
 pub struct CrashRecord {
     pub schema_version: u32,
     pub metadata: CrashMetadata,
+    pub stack: Option<StackRecord>,
     pub core: Option<CoreWriteResult>,
     pub rate_limit: Decision,
     pub dump: DumpRecord,
@@ -217,8 +219,14 @@ fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
         ",
     )?;
 
-    ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN pid_initial_ns INTEGER")?;
-    ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN tid_initial_ns INTEGER")?;
+    ensure_optional_column(
+        conn,
+        "ALTER TABLE crash_records ADD COLUMN pid_initial_ns INTEGER",
+    )?;
+    ensure_optional_column(
+        conn,
+        "ALTER TABLE crash_records ADD COLUMN tid_initial_ns INTEGER",
+    )?;
     ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN comm TEXT")?;
     ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN signal INTEGER")?;
     ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN si_code INTEGER")?;
@@ -236,11 +244,26 @@ fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN cwd TEXT")?;
     ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN root_dir TEXT")?;
-    ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN coredump_filter TEXT")?;
-    ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN rlimit_core TEXT")?;
-    ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN core_location TEXT")?;
-    ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN dump_stored INTEGER")?;
-    ensure_optional_column(conn, "ALTER TABLE crash_records ADD COLUMN dump_reason TEXT")?;
+    ensure_optional_column(
+        conn,
+        "ALTER TABLE crash_records ADD COLUMN coredump_filter TEXT",
+    )?;
+    ensure_optional_column(
+        conn,
+        "ALTER TABLE crash_records ADD COLUMN rlimit_core TEXT",
+    )?;
+    ensure_optional_column(
+        conn,
+        "ALTER TABLE crash_records ADD COLUMN core_location TEXT",
+    )?;
+    ensure_optional_column(
+        conn,
+        "ALTER TABLE crash_records ADD COLUMN dump_stored INTEGER",
+    )?;
+    ensure_optional_column(
+        conn,
+        "ALTER TABLE crash_records ADD COLUMN dump_reason TEXT",
+    )?;
 
     Ok(())
 }
@@ -249,7 +272,9 @@ fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
 fn ensure_optional_column(conn: &Connection, sql: &str) -> rusqlite::Result<()> {
     match conn.execute(sql, []) {
         Ok(_) => Ok(()),
-        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("duplicate column name") => {
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg)))
+            if msg.contains("duplicate column name") =>
+        {
             Ok(())
         }
         Err(err) => Err(err),

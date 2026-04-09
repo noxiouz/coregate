@@ -10,7 +10,9 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/coregate.config.rs"));
 }
 
-pub fn deserialize_compression_field<'de, D>(deserializer: D) -> std::result::Result<Option<i32>, D::Error>
+pub fn deserialize_compression_field<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<i32>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -85,11 +87,15 @@ pub fn load_config_root(path: &Path) -> Result<proto::ConfigRoot> {
         return Ok(proto::ConfigRoot::default());
     }
 
-    let raw = fs::read_to_string(path).with_context(|| format!("read config {}", path.display()))?;
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("read config {}", path.display()))?;
     serde_json::from_str::<proto::ConfigRoot>(&raw).context("parse config JSON into protobuf")
 }
 
-pub fn resolve_config(root: &proto::ConfigRoot, metadata: &CrashMetadata) -> Result<EffectiveConfig> {
+pub fn resolve_config(
+    root: &proto::ConfigRoot,
+    metadata: &CrashMetadata,
+) -> Result<EffectiveConfig> {
     let mut resolved = EffectiveConfig::default();
 
     if let Some(default_cfg) = &root.default {
@@ -133,7 +139,9 @@ fn matches_metadata(matcher: Option<&proto::Matcher>, metadata: &CrashMetadata) 
         return false;
     }
 
-    if let Some(signal) = matcher.signal && metadata.signal != Some(signal) {
+    if let Some(signal) = matcher.signal
+        && metadata.signal != Some(signal)
+    {
         return false;
     }
 
@@ -174,14 +182,13 @@ fn apply_collector_config(dst: &mut EffectiveConfig, src: &proto::CollectorConfi
 
 fn apply_core_config(dst: &mut EffectiveCoreConfig, src: &proto::CoreConfig) -> Result<()> {
     if let Some(value) = src.compression {
-        dst.compression = match proto::Compression::try_from(value)
-            .context("parse compression enum")?
-        {
-            proto::Compression::Unspecified => dst.compression,
-            proto::Compression::None => Compression::None,
-            proto::Compression::Zstd => Compression::Zstd,
-            proto::Compression::Xz => Compression::Xz,
-        };
+        dst.compression =
+            match proto::Compression::try_from(value).context("parse compression enum")? {
+                proto::Compression::Unspecified => dst.compression,
+                proto::Compression::None => Compression::None,
+                proto::Compression::Zstd => Compression::Zstd,
+                proto::Compression::Xz => Compression::Xz,
+            };
     }
     if let Some(value) = src.sparse {
         dst.sparse = value;

@@ -15,6 +15,13 @@ Last updated: 2026-04-09
 - compressed core storage (`zstd`, `xz`) and sparse uncompressed writes
 - fail-closed `PR_DUMPABLE` handling
 - hot-path refactor so expensive enrichment happens after core draining
+- first BPF stack tracer capture path:
+  - `kprobe/do_coredump`
+  - `bpf_get_stack(..., BPF_F_USER_STACK)`
+  - pinned LRU map under `/sys/fs/bpf/coregate`
+  - optional best-effort stack enrichment in `coregate`
+  - `blazesym` live process symbolization plus remote-friendly normalization
+  - standalone `coregate-bpf` loader
 - QEMU-based Debian VM harness
 - guest control plane over virtio-serial with a guest `vmtest-agent`
 - musl guest binaries for VM tests to avoid host/guest glibc mismatch
@@ -28,13 +35,14 @@ Last updated: 2026-04-09
 
 - building out scenario coverage in the VM harness
 - shaping the VM harness so it can later be moved into a reusable repo and wrapped by Bazel
+- validating BPF capture across kernels and preparing later symbolization
 
 ### Not Started
 
 - socket mode ingress for kernel 6.16+
 - distributed rate limiting
 - GDB-based stack extraction
-- BPF-based stack extraction and symbolization
+- BPF symbolization and richer stack/debug data
 - CPU register extraction from core notes or helper metadata
 - ClickHouse sink
 - plugin crate/runtime reintroduction once there is an actual extension surface
@@ -122,6 +130,22 @@ Current collection flow:
 - `xz` compression
 - sparse file support for uncompressed writes
 
+### BPF Stack Tracer
+
+- separate loader binary: `coregate-bpf`
+- pinned BPF objects under `/sys/fs/bpf/coregate`
+- fixed stack record shape: `count + 32 user addresses`
+- LRU hash map keyed by global pid/tgid
+- best-effort map read in the collector fast path
+- `blazesym` user-space symbolization and normalized file-offset metadata
+- debug inspection commands:
+  - `coregate debug-bpf-stack <pid>`
+  - `coregate debug-bpf-stats`
+- host validation on Linux `6.6.87.2-microsoft-standard-WSL2`:
+  - `do_coredump` kprobe fired
+  - `bpf_get_stack` captured 8 frames
+  - `coregate` read the pinned stack entry successfully
+
 ### VM Test Harness
 
 - Debian 12 `generic` qcow2 image fetch helper
@@ -150,10 +174,11 @@ Remaining work:
 
 ### Phase 2: Add richer metadata and stack extraction
 
-Status: not started
+Status: in progress
 
 - GDB stack provider
 - CPU register extraction from core notes
+- BPF symbolization in user space
 - evaluate how stack/provider outputs should land in JSON and SQLite
 
 ### Phase 3: Add socket mode and kernel-version coverage
@@ -178,9 +203,10 @@ Status: not started
 
 ## BPF Stack Tracer Plan
 
-Status: not started
+Status: first capture path complete
 
 - Hook around `do_coredump`
 - Capture frame addresses into a pinned map keyed by global pid/tgid
-- Collector reads frames and symbolizes them
+- Collector reads frames from the pinned map
+- Symbolize later in user space
 - Fallback to GDB provider

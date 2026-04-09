@@ -1,6 +1,7 @@
 ---
 title: Kernel Modes
 weight: 20
+summary: Choose between `handle`, `serve-legacy`, and `serve` based on kernel support and integration style.
 ---
 
 ## `handle`
