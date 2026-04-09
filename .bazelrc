@@ -1,0 +1,11 @@
+build --enable_platform_specific_config
+
+# Rust
+build --@rules_rust//rust/toolchain/channel=stable
+
+# Test
+test --test_output=errors
+
+# musl static builds
+build:musl --platforms=//:linux_x86_64_musl
+build:musl --extra_toolchains=@rust_toolchains//:all
