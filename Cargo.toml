@@ -1,0 +1,36 @@
+[workspace]
+members = [
+  "crates/cli",
+  "crates/corefile",
+  "crates/kernel",
+  "crates/limit",
+  "crates/meta",
+  "crates/store",
+  "crates/telemetry",
+  "crates/victim-crash",
+  "crates/vmtest",
+  "crates/vmtest-agent",
+  "crates/vmtest-protocol",
+  "crates/xtask",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde", "clock"] }
+object = { version = "0.37", features = ["read_core", "elf"] }
+zstd = "0.13"
+xz2 = "0.1"
+libc = "0.2"
+prost = "0.13"
+prost-build = "0.13"

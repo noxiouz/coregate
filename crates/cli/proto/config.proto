@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package coregate.config;
+
+message ConfigRoot {
+  optional CollectorConfig default = 1;
+  repeated ConfigOverride overrides = 2;
+}
+
+message CollectorConfig {
+  optional string output_dir = 1;
+  optional string metadata_jsonl = 2;
+  optional string metadata_sqlite = 3;
+  optional string limit_state_file = 4;
+  optional bool respect_dumpable = 5;
+  optional bool package_lookup = 6;
+  optional CoreConfig core = 7;
+  optional RateLimitPolicy rate_limit = 8;
+}
+
+message CoreConfig {
+  optional Compression compression = 1;
+  optional bool sparse = 2;
+  optional uint32 min_free_percent = 3;
+}
+
+enum Compression {
+  COMPRESSION_UNSPECIFIED = 0;
+  NONE = 1;
+  ZSTD = 2;
+  XZ = 3;
+}
+
+message RateLimitPolicy {
+  optional uint32 default_max_per_minute = 1;
+  repeated RateLimitRule rules = 2;
+}
+
+message RateLimitRule {
+  optional string binary = 1;
+  optional string cgroup_prefix = 2;
+  optional uint32 max_per_minute = 3;
+}
+
+message ConfigOverride {
+  optional Matcher matcher = 1;
+  optional CollectorConfig config = 2;
+}
+
+message Matcher {
+  optional string binary_name = 1;
+  optional string cgroup_prefix = 2;
+  optional string runtime = 3;
+  optional int32 signal = 4;
+}
