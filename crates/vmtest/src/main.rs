@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use vmtest::{CorePatternE2eOptions, RunTestOptions, fetch_debian_image, run_core_pattern_e2e, run_test};
@@ -94,6 +94,12 @@ struct RunTestArgs {
     #[arg(long)]
     guest_setup: Option<String>,
 
+    /// Path to a file containing guest setup shell commands.
+    /// If both --guest-setup and --guest-setup-file are given,
+    /// the file contents take precedence.
+    #[arg(long)]
+    guest_setup_file: Option<PathBuf>,
+
     /// Additional files to copy into the VM's /usr/local/bin/.
     #[arg(long)]
     extra_file: Vec<PathBuf>,
@@ -139,6 +145,12 @@ fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Commands::RunTest(args) => {
+            let guest_setup = match &args.guest_setup_file {
+                Some(path) => Some(std::fs::read_to_string(path).with_context(|| {
+                    format!("reading guest-setup-file: {}", path.display())
+                })?),
+                None => args.guest_setup,
+            };
             let result = run_test(RunTestOptions {
                 image: args.image,
                 agent: args.agent,
@@ -146,7 +158,7 @@ fn run(cli: Cli) -> Result<i32> {
                 memory_mib: args.memory_mib,
                 cpus: args.cpus,
                 timeout_secs: args.timeout,
-                guest_setup: args.guest_setup,
+                guest_setup,
                 extra_files: args.extra_file,
                 workdir: args.workdir,
             })?;
