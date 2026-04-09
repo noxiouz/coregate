@@ -1,0 +1,17 @@
+target/
+
+# Bazel
+bazel-.*
+
+# Local caches and debug artifacts
+.cache/
+.codex
+.claude/
+.vmdebug/
+site-public/
+site/.hugo_build.lock
+
+# Editor and OS noise
+.DS_Store
+*.swp
+*.swo

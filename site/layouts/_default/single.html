@@ -1,0 +1,12 @@
+{{ define "main" }}
+  <article class="doc">
+    <header class="page-head">
+      <p class="eyebrow">{{ if eq .Section "docs" }}Docs{{ else }}Coregate{{ end }}</p>
+      <h1>{{ .Title }}</h1>
+      {{ with .Params.summary }}<p class="lede">{{ . }}</p>{{ end }}
+    </header>
+    <div class="prose">
+      {{ .Content }}
+    </div>
+  </article>
+{{ end }}

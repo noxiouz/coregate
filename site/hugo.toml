@@ -1,0 +1,31 @@
+baseURL = 'https://noxiouz.github.io/coregate/'
+languageCode = 'en-us'
+title = 'coregate'
+enableRobotsTXT = true
+
+[params]
+  description = 'Rust coredump collector for Linux with handle and socket modes, fast metadata extraction, and VM-backed integration tests.'
+  repo = 'https://github.com/noxiouz/coregate'
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+
+[menu]
+  [[menu.main]]
+    name = 'Docs'
+    pageRef = '/docs'
+    weight = 10
+  [[menu.main]]
+    name = 'Quickstart'
+    pageRef = '/docs/quickstart'
+    weight = 20
+  [[menu.main]]
+    name = 'Testing'
+    pageRef = '/docs/testing'
+    weight = 30
+  [[menu.main]]
+    name = 'GitHub'
+    url = 'https://github.com/noxiouz/coregate'
+    weight = 40

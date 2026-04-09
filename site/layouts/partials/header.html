@@ -1,0 +1,10 @@
+<header class="topbar">
+  <div class="shell topbar-inner">
+    <a class="brand" href="{{ "/" | relURL }}">coregate</a>
+    <nav class="nav">
+      {{ range .Site.Menus.main }}
+        <a href="{{ .URL }}">{{ .Name }}</a>
+      {{ end }}
+    </nav>
+  </div>
+</header>

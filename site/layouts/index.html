@@ -1,0 +1,50 @@
+{{ define "main" }}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Rust coredump collector for Linux</p>
+      <h1>Fast crash intake, real kernel modes, and VM-backed validation.</h1>
+      <p class="lede">Coregate captures coredumps through `core_pattern` or socket-based kernel delivery, extracts metadata worth querying, stores dumps with sane policies, and validates behavior inside QEMU instead of pretending unit tests are enough.</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="{{ "/docs/quickstart/" | relURL }}">Read the Quickstart</a>
+        <a class="button button-secondary" href="{{ .Site.Params.repo }}">View on GitHub</a>
+      </div>
+    </div>
+    <div class="code-panel">
+<pre><code>sudo coregate setup handle --apply
+sudo coregate setup server-legacy --apply
+sudo coregate setup server --apply
+
+cargo run -p xtask -- vmtest run --scenario all</code></pre>
+    </div>
+  </section>
+
+  <section class="feature-band">
+    <div class="feature">
+      <h2>Kernel-aware ingress</h2>
+      <p>`handle` for classic `core_pattern`, `serve-legacy` for `@/path.sock`, and `serve` for `@@/path.sock` protocol mode.</p>
+    </div>
+    <div class="feature">
+      <h2>Useful metadata</h2>
+      <p>Process identity, executable details, build IDs, cgroup context, dumpability, runtime classification, and storage outcome.</p>
+    </div>
+    <div class="feature">
+      <h2>Practical storage</h2>
+      <p>Sparse or compressed core storage, free-space protection, JSONL output, and optional SQLite indexing.</p>
+    </div>
+  </section>
+
+  <section class="card-grid">
+    <a class="card" href="{{ "/docs/kernel-modes/" | relURL }}">
+      <h2>Kernel modes</h2>
+      <p>Understand `handle`, `serve-legacy`, and `serve`, and how `@` and `@@` map to different socket protocols.</p>
+    </a>
+    <a class="card" href="{{ "/docs/configuration/" | relURL }}">
+      <h2>Configuration</h2>
+      <p>JSON parsed into protobuf types, storage policy, metadata sinks, and rate-limit configuration.</p>
+    </a>
+    <a class="card" href="{{ "/docs/testing/" | relURL }}">
+      <h2>Testing</h2>
+      <p>QEMU-backed crash scenarios with Debian guests, explicit kernel selection, and integration tests that hit real coredump paths.</p>
+    </a>
+  </section>
+{{ end }}
