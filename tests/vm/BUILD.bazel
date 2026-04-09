@@ -1,6 +1,11 @@
 load("//bzl:vm_host.bzl", "vm_host")
 load("//bzl:vm_kernel.bzl", "vm_kernel_from_image")
 load("//bzl:vm_test.bzl", "vm_python_test", "vm_sh_test")
+load(":defs.bzl", "HANDLE_DATA", "VM_TAGS", "handle_guest_setup")
+
+# ---------------------------------------------------------------------------
+# VM host targets
+# ---------------------------------------------------------------------------
 
 # Extract kernel + initrd from the Debian cloud image.
 # Requires libguestfs-tools: sudo apt-get install libguestfs-tools
@@ -9,7 +14,7 @@ vm_kernel_from_image(
     image = "@debian12_vm_image//file",
 )
 
-# VM host — boots from disk (GRUB inside the qcow2).
+# Boot from disk (GRUB inside the qcow2).
 vm_host(
     name = "debian12",
     image = "@debian12_vm_image//file",
@@ -18,7 +23,7 @@ vm_host(
     visibility = ["//visibility:public"],
 )
 
-# VM host — direct kernel boot (faster, skips GRUB/BIOS).
+# Direct kernel boot (faster, skips GRUB/BIOS).
 vm_host(
     name = "debian12_direct",
     image = "@debian12_vm_image//file",
@@ -28,38 +33,91 @@ vm_host(
     visibility = ["//visibility:public"],
 )
 
-# Python test that runs *inside* the VM.
-#
-# guest_setup installs coregate as the core_pattern handler, triggers a
-# SIGSEGV crash, then the Python assertions inspect /var/lib/coregate/.
-#
-# Run:
-#   bazel test //tests/vm:core_pattern_segv
+# ---------------------------------------------------------------------------
+# Scenarios — handle mode (work with any kernel)
+# ---------------------------------------------------------------------------
+
+# 1. core_pattern_segv: basic SIGSEGV collection
 vm_python_test(
     name = "core_pattern_segv",
     srcs = ["test_core_pattern_segv.py"],
     vm_host = ":debian12",
+    data = HANDLE_DATA,
+    guest_setup = handle_guest_setup("/usr/local/bin/victim-crash segv || true"),
+    timeout_secs = 300,
+    tags = VM_TAGS,
+)
+
+# 2. dumpable_off: PR_SET_DUMPABLE=0, coregate should refuse
+vm_python_test(
+    name = "dumpable_off",
+    srcs = ["test_dumpable_off.py"],
+    vm_host = ":debian12",
+    data = HANDLE_DATA,
+    guest_setup = handle_guest_setup("/usr/local/bin/victim-crash dumpable-off-segv || true"),
+    timeout_secs = 300,
+    tags = VM_TAGS,
+)
+
+# 3. deleted_exe: binary deletes itself then crashes
+vm_python_test(
+    name = "deleted_exe",
+    srcs = ["test_deleted_exe.py"],
+    vm_host = ":debian12",
+    data = HANDLE_DATA,
+    guest_setup = handle_guest_setup("/usr/local/bin/victim-crash self-delete-segv || true"),
+    timeout_secs = 300,
+    tags = VM_TAGS,
+)
+
+# 4. storage_refused: min_free_percent=100 forces storage refusal
+vm_python_test(
+    name = "storage_refused",
+    srcs = ["test_storage_refused.py"],
+    vm_host = ":debian12",
     data = [
         "//crates/cli:coregate",
         "//crates/victim-crash",
-        "coregate-config.json",
+        "coregate-config-storage-refused.json",
     ],
-    guest_setup = " && ".join([
-        "install -d -m0755 /etc/coregate /var/lib/coregate /var/lib/coregate/cores",
-        "install -m0644 /usr/local/bin/coregate-config.json /etc/coregate/config.json",
-        "printf '%s' '|/usr/local/bin/coregate handle %P %i %I %s %t %d %E /etc/coregate/config.json' > /proc/sys/kernel/core_pattern",
-        "sysctl -w kernel.core_pipe_limit=16",
-        "ulimit -c unlimited; /usr/local/bin/victim-crash segv || true",
-        "sleep 2",
-    ]),
+    guest_setup = handle_guest_setup(
+        "/usr/local/bin/victim-crash segv || true",
+        config_file = "coregate-config-storage-refused.json",
+    ),
     timeout_secs = 300,
-    tags = [
-        "exclusive",
-        "requires-vm",
-    ],
+    tags = VM_TAGS,
 )
 
-# Example: shell test running inside a VM.
+# 5. thread_crash: non-main thread named "crash-worker" crashes
+vm_python_test(
+    name = "thread_crash",
+    srcs = ["test_thread_crash.py"],
+    vm_host = ":debian12",
+    data = HANDLE_DATA,
+    guest_setup = handle_guest_setup("/usr/local/bin/victim-crash thread-segv || true"),
+    timeout_secs = 300,
+    tags = VM_TAGS,
+)
+
+# ---------------------------------------------------------------------------
+# Scenarios — server modes (require 6.16+ / 6.19+ kernel)
+# ---------------------------------------------------------------------------
+# server_segv and server_legacy_segv require explicit kernel/initrd with
+# the relevant socket API. Use debian12_direct or a custom vm_host with
+# a 6.16+ kernel. These are commented out until a suitable kernel is
+# available in CI.
+
+# vm_python_test(
+#     name = "server_legacy_segv",
+#     srcs = ["test_server_legacy_segv.py"],
+#     vm_host = ":debian12_direct",
+#     ...
+# )
+
+# ---------------------------------------------------------------------------
+# Smoke test (shell)
+# ---------------------------------------------------------------------------
+
 # vm_sh_test(
 #     name = "smoke_test",
 #     vm_host = ":debian12",
