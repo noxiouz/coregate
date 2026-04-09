@@ -7,9 +7,15 @@ summary: Build Coregate, configure kernel delivery, and optionally enable the BP
 ## Build
 
 ```bash
+# Cargo
 cargo build -p coregate
 cargo build -p coregate-bpf
+
+# Or Bazel (manages Rust toolchain automatically)
+bazel build //crates/cli:coregate
 ```
+
+See [Bazel Build](/docs/bazel/) for the full Bazel workflow.
 
 ## Configure `core_pattern` handle mode
 

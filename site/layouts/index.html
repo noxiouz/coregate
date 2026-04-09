@@ -58,6 +58,10 @@ coregate v0.1.0
       <h3>Kernel-version aware</h3>
       <p>`coregate setup` refuses unsupported socket modes based on the running kernel version instead of printing invalid setup commands.</p>
     </div>
+    <div class="feature-card">
+      <h3>VM integration tests</h3>
+      <p>QEMU-based test harness runs Python, Rust, and shell tests inside real Linux guests. Bazel macros make writing new VM tests a one-liner.</p>
+    </div>
   </section>
 
   <section class="section-intro" id="how-it-works">
@@ -129,10 +133,13 @@ sudo coregate -- debug-bpf-stats --json</code></pre>
       <p class="lede">Coregate is currently built from source. The docs cover installation, kernel setup, optional BPF stack capture, and configuration in one place.</p>
     </div>
     <div class="install-actions">
-      <pre><code>cargo build -p coregate
+      <pre><code># Cargo
+cargo build -p coregate
 cargo build -p coregate-bpf
-cargo test -p coregate
-sudo cargo run -p coregate -- setup handle --apply</code></pre>
+
+# Or Bazel
+bazel build //crates/cli:coregate
+bazel test //tests/vm:core_pattern_segv</code></pre>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/docs/quickstart/" | relURL }}">Get Started</a>
         <a class="button button-secondary" href="{{ .Site.Params.repo }}">GitHub</a>
