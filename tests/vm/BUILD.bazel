@@ -1,11 +1,28 @@
 load("//bzl:vm_host.bzl", "vm_host")
+load("//bzl:vm_kernel.bzl", "vm_kernel_from_image")
 load("//bzl:vm_test.bzl", "vm_python_test", "vm_sh_test")
 
-# VM host using the Debian 12 image fetched via http_file in MODULE.bazel.
-# Bazel downloads and caches the ~660MB qcow2 automatically on first use.
+# Extract kernel + initrd from the Debian cloud image.
+# Requires libguestfs-tools: sudo apt-get install libguestfs-tools
+vm_kernel_from_image(
+    name = "debian12_kernel",
+    image = "@debian12_vm_image//file",
+)
+
+# VM host — boots from disk (GRUB inside the qcow2).
 vm_host(
     name = "debian12",
     image = "@debian12_vm_image//file",
+    memory_mib = 2048,
+    cpus = 2,
+    visibility = ["//visibility:public"],
+)
+
+# VM host — direct kernel boot (faster, skips GRUB/BIOS).
+vm_host(
+    name = "debian12_direct",
+    image = "@debian12_vm_image//file",
+    vm_kernel = ":debian12_kernel",
     memory_mib = 2048,
     cpus = 2,
     visibility = ["//visibility:public"],
