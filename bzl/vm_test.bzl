@@ -64,6 +64,15 @@ def _vm_test_impl(ctx):
         '  --timeout {timeout} \\'.format(timeout = ctx.attr.timeout_secs),
     ]
 
+    if vm.kernel:
+        lines.append('  --kernel {path} \\'.format(path = vm.kernel.short_path))
+
+    if vm.initrd:
+        lines.append('  --initrd {path} \\'.format(path = vm.initrd.short_path))
+
+    if vm.append:
+        lines.append("  --append '{append}' \\".format(append = vm.append))
+
     if guest_setup_file:
         lines.append('  --guest-setup-file {path} \\'.format(path = guest_setup_file.short_path))
 
@@ -80,6 +89,10 @@ def _vm_test_impl(ctx):
     )
 
     all_runfiles_files = [vm.image, test_bin, runner_bin, agent_bin] + data_files
+    if vm.kernel:
+        all_runfiles_files.append(vm.kernel)
+    if vm.initrd:
+        all_runfiles_files.append(vm.initrd)
     if guest_setup_file:
         all_runfiles_files.append(guest_setup_file)
 

@@ -78,6 +78,18 @@ struct RunTestArgs {
     #[arg(long)]
     test_binary: PathBuf,
 
+    /// Kernel image for direct boot (requires --initrd).
+    #[arg(long)]
+    kernel: Option<PathBuf>,
+
+    /// Initrd for direct boot (requires --kernel).
+    #[arg(long)]
+    initrd: Option<PathBuf>,
+
+    /// Extra kernel command-line parameters.
+    #[arg(long)]
+    append: Option<String>,
+
     /// VM memory in MiB.
     #[arg(long, default_value_t = 2048)]
     memory_mib: u32,
@@ -153,6 +165,9 @@ fn run(cli: Cli) -> Result<i32> {
             };
             let result = run_test(RunTestOptions {
                 image: args.image,
+                kernel: args.kernel,
+                initrd: args.initrd,
+                append: args.append,
                 agent: args.agent,
                 test_binary: args.test_binary,
                 memory_mib: args.memory_mib,

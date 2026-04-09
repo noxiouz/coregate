@@ -298,6 +298,9 @@ pub fn server_legacy_segv_scenario() -> VmScenario<'static> {
 #[derive(Debug, Clone)]
 pub struct RunTestOptions {
     pub image: PathBuf,
+    pub kernel: Option<PathBuf>,
+    pub initrd: Option<PathBuf>,
+    pub append: Option<String>,
     pub agent: PathBuf,
     pub test_binary: PathBuf,
     pub memory_mib: u32,
@@ -311,6 +314,9 @@ pub struct RunTestOptions {
 #[derive(Debug, Clone)]
 pub struct GuestCommandOptions {
     pub image: PathBuf,
+    pub kernel: Option<PathBuf>,
+    pub initrd: Option<PathBuf>,
+    pub append: Option<String>,
     pub agent: PathBuf,
     pub memory_mib: u32,
     pub cpus: u8,
@@ -339,6 +345,9 @@ pub fn run_test(opts: RunTestOptions) -> Result<i32> {
     );
     let result = run_guest_command(GuestCommandOptions {
         image: opts.image,
+        kernel: opts.kernel,
+        initrd: opts.initrd,
+        append: opts.append,
         agent: opts.agent,
         memory_mib: opts.memory_mib,
         cpus: opts.cpus,
@@ -364,6 +373,16 @@ pub fn run_test(opts: RunTestOptions) -> Result<i32> {
 pub fn run_guest_command(opts: GuestCommandOptions) -> Result<GuestCommandResult> {
     ensure!(opts.image.exists(), "image not found: {}", opts.image.display());
     ensure!(opts.agent.exists(), "agent binary not found: {}", opts.agent.display());
+    ensure!(
+        opts.kernel.is_some() == opts.initrd.is_some(),
+        "kernel and initrd must either both be set or both be unset"
+    );
+    if let Some(kernel) = &opts.kernel {
+        ensure!(kernel.exists(), "kernel not found: {}", kernel.display());
+    }
+    if let Some(initrd) = &opts.initrd {
+        ensure!(initrd.exists(), "initrd not found: {}", initrd.display());
+    }
     for path in &opts.extra_files {
         ensure!(path.exists(), "extra file not found: {}", path.display());
     }
@@ -381,9 +400,9 @@ pub fn run_guest_command(opts: GuestCommandOptions) -> Result<GuestCommandResult
 
     let e2e_opts = CorePatternE2eOptions {
         image: opts.image.clone(),
-        kernel: None,
-        initrd: None,
-        append: None,
+        kernel: opts.kernel,
+        initrd: opts.initrd,
+        append: opts.append,
         collector: None,
         victim: None,
         agent: Some(opts.agent.clone()),
