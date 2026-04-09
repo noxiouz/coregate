@@ -1,0 +1,248 @@
+---
+title: VM Tests
+weight: 50
+summary: Run integration tests inside QEMU VMs using vm_rust_test, vm_python_test, and vm_sh_test Bazel macros.
+---
+
+Coregate uses QEMU-based VM tests for integration testing.
+Tests run inside a real Linux guest with full kernel access, so they can
+exercise `core_pattern`, signal handling, and filesystem behavior that
+cannot be tested in a sandbox.
+
+The design is inspired by [Antlir2's vm_test](https://facebookincubator.github.io/antlir/docs/internals/vm-tests/) pattern.
+
+## Architecture
+
+```
+vm_rust_test / vm_python_test / vm_sh_test   (convenience macros)
+        |
+        v
+    _vm_test rule
+        |
+        +-- Builds inner test (rust_test / py_test / sh_test)
+        +-- Generates runner script that invokes vmtest CLI:
+        |     1. Creates FAT tools image with test binary + agent + data files
+        |     2. Creates cloud-init seed + overlay qcow2
+        |     3. Boots QEMU with virtio-serial control channel
+        |     4. Agent mounts tools, installs binaries to /usr/local/bin/
+        |     5. Runs guest_setup commands, then executes the test
+        +-- Propagates guest exit code back to Bazel
+```
+
+## Quick start
+
+```bash
+# Run a VM test (downloads ~660MB Debian image on first run)
+bazel test //tests/vm:core_pattern_segv --test_output=streamed
+
+# List all VM test targets
+bazel query 'kind("_vm_test rule", //...)'
+```
+
+## Prerequisites
+
+- QEMU (`qemu-system-x86_64`)
+- KVM access (`/dev/kvm`) for acceptable performance
+- `mtools` (for FAT image creation)
+- `cloud-image-utils` (for `cloud-localds`)
+- `qemu-utils` (for `qemu-img`)
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt-get install qemu-system-x86 qemu-utils mtools cloud-image-utils
+```
+
+## Writing a VM test
+
+### Python test
+
+```python
+load("//bzl:vm_test.bzl", "vm_python_test")
+
+vm_python_test(
+    name = "my_test",
+    srcs = ["test_something.py"],
+    vm_host = "//tests/vm:debian12",
+    guest_setup = "apt-get install -y some-package",
+    data = [
+        "//crates/cli:coregate",
+        "config.json",
+    ],
+    timeout_secs = 300,
+)
+```
+
+The `py_test` is built with `rules_python`'s hermetic toolchain, producing a
+self-contained executable. This executable (bundled interpreter + deps) is
+copied into the VM and executed there. Python deps from Bazel are available
+inside the guest.
+
+### Rust test
+
+```python
+load("//bzl:vm_test.bzl", "vm_rust_test")
+
+vm_rust_test(
+    name = "my_rust_test",
+    srcs = ["test_something.rs"],
+    vm_host = "//tests/vm:debian12",
+    deps = ["//crates/corefile"],
+)
+```
+
+### Shell test
+
+```python
+load("//bzl:vm_test.bzl", "vm_sh_test")
+
+vm_sh_test(
+    name = "smoke",
+    srcs = ["smoke.sh"],
+    vm_host = "//tests/vm:debian12",
+)
+```
+
+### Generic (wrap an existing test target)
+
+```python
+load("//bzl:vm_test.bzl", "vm_test")
+
+vm_test(
+    name = "my_test",
+    test = ":some_existing_test",
+    vm_host = "//tests/vm:debian12",
+)
+```
+
+## VM host configuration
+
+A `vm_host` target defines the VM environment: disk image, memory, CPUs,
+and optionally a kernel/initrd for direct boot.
+
+```python
+load("//bzl:vm_host.bzl", "vm_host")
+
+# Boot from disk (GRUB inside the qcow2)
+vm_host(
+    name = "debian12",
+    image = "@debian12_vm_image//file",
+    memory_mib = 2048,
+    cpus = 2,
+)
+```
+
+The Debian 12 cloud image is fetched automatically via `http_file` in
+`MODULE.bazel` and cached by Bazel.
+
+### Direct kernel boot
+
+Direct boot skips GRUB/BIOS and boots the kernel directly via QEMU's
+`-kernel` / `-initrd` flags. This is faster and gives control over
+which kernel version runs in the guest.
+
+```python
+load("//bzl:vm_kernel.bzl", "vm_kernel_from_image")
+load("//bzl:vm_host.bzl", "vm_host")
+
+# Extract kernel + initrd from the cloud image
+vm_kernel_from_image(
+    name = "debian12_kernel",
+    image = "@debian12_vm_image//file",
+)
+
+# Direct boot VM host
+vm_host(
+    name = "debian12_fast",
+    image = "@debian12_vm_image//file",
+    vm_kernel = ":debian12_kernel",
+)
+```
+
+`vm_kernel_from_image` uses `libguestfs` to extract `/boot/vmlinuz-*` and
+`/boot/initrd.img-*` from the disk image without needing root. Install it
+with:
+
+```bash
+sudo apt-get install libguestfs-tools
+```
+
+You can also pass an explicit kernel and initrd:
+
+```python
+vm_host(
+    name = "custom_kernel",
+    image = "@debian12_vm_image//file",
+    kernel = ":my_vmlinuz",
+    initrd = ":my_initrd",
+    append = "console=ttyS0 root=/dev/vda1 debug",
+)
+```
+
+## guest_setup
+
+Shell commands passed via `guest_setup` run inside the VM after files are
+installed to `/usr/local/bin/` but before the test binary executes.
+
+Use this to configure the guest environment:
+
+```python
+vm_python_test(
+    name = "core_pattern_test",
+    srcs = ["test_core.py"],
+    vm_host = ":debian12",
+    data = [
+        "//crates/cli:coregate",
+        "//crates/victim-crash",
+        "coregate-config.json",
+    ],
+    guest_setup = " && ".join([
+        "install -d -m0755 /etc/coregate /var/lib/coregate/cores",
+        "install -m0644 /usr/local/bin/coregate-config.json /etc/coregate/config.json",
+        "printf '%s' '|/usr/local/bin/coregate handle %P %i %I %s %t %d %E /etc/coregate/config.json' > /proc/sys/kernel/core_pattern",
+        "sysctl -w kernel.core_pipe_limit=16",
+        "ulimit -c unlimited; /usr/local/bin/victim-crash segv || true",
+        "sleep 2",
+    ]),
+)
+```
+
+The `guest_setup` string is written to a shell script file at build time
+(avoiding quoting issues) and passed to the runner via `--guest-setup-file`.
+
+## data files
+
+Files listed in `data` are copied into the VM's `/usr/local/bin/` directory.
+This includes binaries, config files, and any other artifacts the test needs.
+
+## How it works internally
+
+1. **Tools image**: A 128MB FAT filesystem (`tools.img`) is created with
+   `mkfs.vfat` and populated via `mcopy` with the vmtest-agent, test
+   binary, and all data files.
+
+2. **Cloud-init**: A seed image drives first-boot setup: mounts the tools
+   image at `/mnt/coregate-tools`, copies binaries to `/usr/local/bin/`,
+   and starts the vmtest-agent.
+
+3. **QEMU**: Boots with the base image (as a copy-on-write overlay),
+   seed image, and tools image as virtio drives. A virtio-serial channel
+   (`coregate-host`) connects host and guest.
+
+4. **Control channel**: The host sends `RunCommand` requests over
+   virtio-serial. The agent executes them and returns exit code +
+   stdout/stderr.
+
+5. **Exit code**: The guest test's exit code propagates back through the
+   control channel to the Bazel test runner.
+
+## Debugging
+
+Keep the VM working directory for inspection:
+
+```bash
+COREGATE_VM_KEEP_WORKDIR=1 bazel test //tests/vm:core_pattern_segv --test_output=streamed
+```
+
+This preserves the overlay image, serial log, and tools image in a temp
+directory printed to stderr.

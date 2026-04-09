@@ -9,3 +9,5 @@ Coregate collects Linux coredumps in two kernel-facing modes:
 - `serve` / `serve-legacy`: socket modes for newer kernels
 
 It focuses on the fast path first: drain the dump, extract useful metadata, store the core, optionally enrich it with BPF-captured user stacks, and get out of the kernel's way.
+
+Builds with both Cargo and [Bazel](/docs/bazel/), with [QEMU-based VM integration tests](/docs/vm-tests/) that exercise real kernel behavior.
