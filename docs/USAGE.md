@@ -90,17 +90,33 @@ Notes:
 - remote symbolization can be enabled with:
   - `"symbolizer": { "mode": "http", "http": { "url": "...", "timeout_ms": 3000 } }`
 - the remote service is expected to symbolize normalized file offsets, for example with `blazesym`
+- the HTTP body uses protobuf-generated message types serialized as JSON
+- the shared schema lives in `crates/symbolizer-proto/proto/symbolizer.proto`
 - current validation was done on Linux `6.6.87.2-microsoft-standard-WSL2`
 
 Remote HTTP contract:
 
 - request:
   - `provider`
+  - `process`
+    - `pid`
+    - `arch`
+    - `exe`
+    - `build_id`
+  - `modules[]`
+    - `id`
+    - `path`
+    - `build_id`
+    - `start`
+    - `end`
+    - `file_offset`
+    - `perms`
   - `frames[]`
     - `addr`
     - `normalized`
       - `kind`
       - `file_offset`
+      - `module_id`
       - `path`
       - `build_id`
       - `reason`

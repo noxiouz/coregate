@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package coregate.symbolizer;
+
+// Shared remote symbolization schema.
+//
+// HTTP mode serializes these protobuf-generated types as JSON today.
+// The same messages are intended to back a future gRPC interface.
+
+message SymbolizationRequest {
+  // Stack source provider, e.g. "bpf".
+  string provider = 1;
+  // Process snapshot for the crashing task.
+  optional ProcessInfo process = 2;
+  // File-backed mappings visible to the crashing process.
+  repeated Module modules = 3;
+  // Captured frames in original order.
+  repeated SymbolizationFrame frames = 4;
+}
+
+message ProcessInfo {
+  // Global pid/tgid.
+  uint32 pid = 1;
+  // Process architecture, e.g. "x86_64".
+  optional string arch = 2;
+  // Resolved main executable path.
+  optional string exe = 3;
+  // Build ID for the main executable when available.
+  optional string build_id = 4;
+}
+
+message Module {
+  // Stable id referenced by frames.
+  uint32 id = 1;
+  // Backing file path for this mapping.
+  string path = 2;
+  // Build ID for the mapped object when available.
+  optional string build_id = 3;
+  // Mapping start address in the process.
+  uint64 start = 4;
+  // Mapping end address in the process.
+  uint64 end = 5;
+  // File offset corresponding to the mapping start.
+  uint64 file_offset = 6;
+  // Mapping permissions from /proc/<pid>/maps, e.g. "r-xp".
+  string perms = 7;
+}
+
+message SymbolizationFrame {
+  // Original captured frame address.
+  uint64 addr = 1;
+  // Normalized file-relative form when local normalization succeeded.
+  optional NormalizedFrame normalized = 2;
+}
+
+message NormalizedFrame {
+  // Normalization kind, usually "elf".
+  string kind = 1;
+  // File offset suitable for remote symbolization.
+  uint64 file_offset = 2;
+  // Optional referenced module id from the modules list.
+  optional uint32 module_id = 3;
+  // Legacy path hint kept for compatibility and debugging.
+  optional string path = 4;
+  // Legacy build-id hint kept for compatibility and debugging.
+  optional string build_id = 5;
+  // Reason why normalization was partial or failed.
+  optional string reason = 6;
+}
+
+message SymbolizationResponse {
+  // One result per input frame, preserving order.
+  repeated SymbolizedFrame frames = 1;
+}
+
+message SymbolizedFrame {
+  // Best-effort symbol name.
+  optional string symbol = 1;
+  // Backing module path from the symbolizer.
+  optional string module = 2;
+  // Offset from the resolved symbol.
+  optional uint64 offset = 3;
+  // Source file when available.
+  optional string file = 4;
+  // Source line when available.
+  optional uint32 line = 5;
+  // Source column when available.
+  optional uint32 column = 6;
+  // Per-frame failure or partial-symbolization reason.
+  optional string reason = 7;
+}

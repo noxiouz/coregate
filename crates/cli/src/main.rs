@@ -586,7 +586,8 @@ fn symbolize_bpf_stack(
         EffectiveSymbolizerConfig::Local => symbolize_stack_record(pid, stack),
         EffectiveSymbolizerConfig::Http(http) => {
             normalize_stack_record(pid, stack).context("prepare remote symbolization input")?;
-            let request = build_remote_symbolization_request(stack);
+            let request = build_remote_symbolization_request(pid, stack)
+                .context("build remote symbolization request")?;
             let client = Client::builder()
                 .timeout(std::time::Duration::from_millis(http.timeout_ms))
                 .build()
@@ -1226,6 +1227,19 @@ mod tests {
 
             let body = &buf[header_end..header_end + content_length];
             let request: RemoteSymbolizationRequest = serde_json::from_slice(body).unwrap();
+            assert_eq!(request.provider, "bpf");
+            assert_eq!(
+                request.process.as_ref().map(|process| process.pid),
+                Some(std::process::id())
+            );
+            assert!(!request.modules.is_empty());
+            assert!(
+                request.frames[0]
+                    .normalized
+                    .as_ref()
+                    .and_then(|normalized| normalized.module_id)
+                    .is_some()
+            );
             let response = symbolize_remote_request_with_blazesym(&request).unwrap();
             let payload = serde_json::to_vec(&response).unwrap();
             write!(
@@ -1251,6 +1265,7 @@ mod tests {
                 normalized: Some(NormalizedFrame {
                     kind: "elf".to_string(),
                     file_offset: 0,
+                    module_id: None,
                     path: None,
                     build_id: None,
                     reason: None,

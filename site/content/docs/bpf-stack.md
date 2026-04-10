@@ -51,8 +51,17 @@ sudo cargo run -p coregate-bpf -- remove
 Coregate can skip live process symbolization and send normalized frames to a
 remote HTTP service instead.
 
+The HTTP body uses protobuf-generated message types serialized as JSON today.
+That keeps the schema shared between Coregate and a future gRPC service.
+
+The shared schema lives in:
+
+```text
+crates/symbolizer-proto/proto/symbolizer.proto
+```
+
 The remote service is expected to resolve normalized file offsets, for example
-by using `blazesym` against the referenced ELF path.
+by using `blazesym` against the referenced ELF path and module snapshot.
 
 Example config:
 
@@ -73,11 +82,25 @@ Example config:
 Request shape:
 
 - `provider`
+- `process`
+  - `pid`
+  - `arch`
+  - `exe`
+  - `build_id`
+- `modules[]`
+  - `id`
+  - `path`
+  - `build_id`
+  - `start`
+  - `end`
+  - `file_offset`
+  - `perms`
 - `frames[]`
   - `addr`
   - `normalized`
     - `kind`
     - `file_offset`
+    - `module_id`
     - `path`
     - `build_id`
     - `reason`

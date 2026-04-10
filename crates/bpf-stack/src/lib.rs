@@ -1,10 +1,19 @@
 use anyhow::{Context, Result};
+use blazesym::helper::read_elf_build_id;
 use blazesym::normalize::{Normalizer, UserMeta};
 use blazesym::symbolize::source::{Elf, Process, Source};
 use blazesym::symbolize::{Input, Symbolized, Symbolizer};
 use blazesym::{Addr, Pid};
+pub use coregate_symbolizer_proto::symbolizer::{
+    Module as RemoteModule, NormalizedFrame, ProcessInfo as RemoteProcessInfo,
+    SymbolizationFrame as RemoteSymbolizationFrame,
+    SymbolizationRequest as RemoteSymbolizationRequest,
+    SymbolizationResponse as RemoteSymbolizationResponse, SymbolizedFrame as RemoteSymbolizedFrame,
+};
 use libbpf_rs::{MapCore, MapFlags, MapHandle};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
 use std::mem::size_of;
 use std::path::{Path, PathBuf};
 
@@ -39,43 +48,6 @@ pub struct StackFrame {
     pub column: Option<u16>,
     pub reason: Option<String>,
     pub normalized: Option<NormalizedFrame>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NormalizedFrame {
-    pub kind: String,
-    pub file_offset: u64,
-    pub path: Option<String>,
-    pub build_id: Option<String>,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteSymbolizationRequest {
-    pub provider: String,
-    pub frames: Vec<RemoteSymbolizationFrame>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteSymbolizationFrame {
-    pub addr: u64,
-    pub normalized: Option<NormalizedFrame>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteSymbolizationResponse {
-    pub frames: Vec<RemoteSymbolizedFrame>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoteSymbolizedFrame {
-    pub symbol: Option<String>,
-    pub module: Option<String>,
-    pub offset: Option<u64>,
-    pub file: Option<String>,
-    pub line: Option<u32>,
-    pub column: Option<u16>,
-    pub reason: Option<String>,
 }
 
 #[repr(C)]
@@ -172,18 +144,47 @@ pub fn normalize_stack_record(pid: u32, stack: &mut StackRecord) -> Result<()> {
     normalize_for_remote(Pid::from(pid), &addrs, stack)
 }
 
-pub fn build_remote_symbolization_request(stack: &StackRecord) -> RemoteSymbolizationRequest {
-    RemoteSymbolizationRequest {
+pub fn build_remote_symbolization_request(
+    pid: u32,
+    stack: &StackRecord,
+) -> Result<RemoteSymbolizationRequest> {
+    let modules =
+        collect_modules(pid).context("collect process modules for remote symbolization")?;
+    let module_index = modules
+        .iter()
+        .map(|module| ((module.path.clone(), module.build_id.clone()), module.id))
+        .collect::<HashMap<_, _>>();
+
+    let frames = stack
+        .frames
+        .iter()
+        .map(|frame| RemoteSymbolizationFrame {
+            addr: frame.addr,
+            normalized: frame.normalized.clone().map(|mut normalized| {
+                if normalized.module_id.is_none() {
+                    normalized.module_id = modules
+                        .iter()
+                        .find(|module| frame.addr >= module.start && frame.addr < module.end)
+                        .map(|module| module.id)
+                        .or_else(|| {
+                            normalized
+                                .path
+                                .as_ref()
+                                .map(|path| (path.clone(), normalized.build_id.clone()))
+                                .and_then(|key| module_index.get(&key).copied())
+                        });
+                }
+                normalized
+            }),
+        })
+        .collect();
+
+    Ok(RemoteSymbolizationRequest {
         provider: stack.provider.clone(),
-        frames: stack
-            .frames
-            .iter()
-            .map(|frame| RemoteSymbolizationFrame {
-                addr: frame.addr,
-                normalized: frame.normalized.clone(),
-            })
-            .collect(),
-    }
+        process: collect_process_info(pid),
+        modules,
+        frames,
+    })
 }
 
 pub fn apply_remote_symbolization(
@@ -203,7 +204,7 @@ pub fn apply_remote_symbolization(
         frame.offset = update.offset;
         frame.file = update.file;
         frame.line = update.line;
-        frame.column = update.column;
+        frame.column = update.column.and_then(|column| u16::try_from(column).ok());
         frame.reason = update.reason;
     }
 
@@ -243,7 +244,18 @@ pub fn symbolize_remote_request_with_blazesym(
             continue;
         }
 
-        let Some(path) = &normalized.path else {
+        let path = normalized
+            .module_id
+            .and_then(|module_id| {
+                request
+                    .modules
+                    .iter()
+                    .find(|module| module.id == module_id)
+                    .map(|module| module.path.clone())
+            })
+            .or_else(|| normalized.path.clone());
+
+        let Some(path) = path else {
             frames.push(RemoteSymbolizedFrame {
                 symbol: None,
                 module: None,
@@ -266,7 +278,7 @@ pub fn symbolize_remote_request_with_blazesym(
                     (
                         Some(info.to_path().display().to_string()),
                         info.line,
-                        info.column,
+                        info.column.map(u32::from),
                     )
                 } else {
                     (None, None, None)
@@ -436,6 +448,7 @@ fn normalize_for_remote(pid: Pid, addrs: &[Addr], stack: &mut StackRecord) -> Re
             UserMeta::Elf(elf) => NormalizedFrame {
                 kind: "elf".to_string(),
                 file_offset,
+                module_id: None,
                 path: Some(elf.path.display().to_string()),
                 build_id: elf
                     .build_id
@@ -446,6 +459,7 @@ fn normalize_for_remote(pid: Pid, addrs: &[Addr], stack: &mut StackRecord) -> Re
             UserMeta::Sym(sym) => NormalizedFrame {
                 kind: "sym".to_string(),
                 file_offset,
+                module_id: None,
                 path: sym
                     .module
                     .as_ref()
@@ -456,6 +470,7 @@ fn normalize_for_remote(pid: Pid, addrs: &[Addr], stack: &mut StackRecord) -> Re
             UserMeta::Unknown(unknown) => NormalizedFrame {
                 kind: "unknown".to_string(),
                 file_offset,
+                module_id: None,
                 path: None,
                 build_id: None,
                 reason: Some(unknown.reason.to_string()),
@@ -464,6 +479,7 @@ fn normalize_for_remote(pid: Pid, addrs: &[Addr], stack: &mut StackRecord) -> Re
             other => NormalizedFrame {
                 kind: format!("{other:?}"),
                 file_offset,
+                module_id: None,
                 path: None,
                 build_id: None,
                 reason: None,
@@ -481,6 +497,74 @@ fn hex_encode(bytes: &[u8]) -> String {
             let _ = std::fmt::Write::write_fmt(&mut s, format_args!("{b:02x}"));
             s
         })
+}
+
+fn collect_process_info(pid: u32) -> Option<RemoteProcessInfo> {
+    let exe_path = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let exe_path = clean_deleted_suffix(&exe_path);
+    let exe = exe_path.to_string_lossy().to_string();
+    let build_id = read_elf_build_id(&exe_path)
+        .ok()
+        .flatten()
+        .map(|build_id| hex_encode(build_id.as_ref()));
+    Some(RemoteProcessInfo {
+        pid,
+        arch: Some(std::env::consts::ARCH.to_string()),
+        exe: Some(exe),
+        build_id,
+    })
+}
+
+fn collect_modules(pid: u32) -> Result<Vec<RemoteModule>> {
+    let raw = fs::read_to_string(format!("/proc/{pid}/maps"))
+        .with_context(|| format!("read /proc/{pid}/maps"))?;
+    let mut modules = Vec::new();
+    let mut next_id = 0u32;
+
+    for line in raw.lines() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 6 {
+            continue;
+        }
+        let range = fields[0];
+        let perms = fields[1];
+        let offset_hex = fields[2];
+        let path = fields[5];
+
+        if !path.starts_with('/') {
+            continue;
+        }
+
+        let Some((start_hex, end_hex)) = range.split_once('-') else {
+            continue;
+        };
+        let start = u64::from_str_radix(start_hex, 16).unwrap_or(0);
+        let end = u64::from_str_radix(end_hex, 16).unwrap_or(0);
+        let file_offset = u64::from_str_radix(offset_hex, 16).unwrap_or(0);
+        let clean_path = clean_deleted_suffix(Path::new(path));
+        let build_id = read_elf_build_id(&clean_path)
+            .ok()
+            .flatten()
+            .map(|build_id| hex_encode(build_id.as_ref()));
+
+        modules.push(RemoteModule {
+            id: next_id,
+            path: clean_path.to_string_lossy().to_string(),
+            build_id,
+            start,
+            end,
+            file_offset,
+            perms: perms.to_string(),
+        });
+        next_id += 1;
+    }
+
+    Ok(modules)
+}
+
+fn clean_deleted_suffix(path: &Path) -> PathBuf {
+    let rendered = path.to_string_lossy();
+    PathBuf::from(rendered.strip_suffix(" (deleted)").unwrap_or(&rendered))
 }
 
 #[cfg(test)]
@@ -530,6 +614,7 @@ mod tests {
                 normalized: Some(NormalizedFrame {
                     kind: "elf".to_string(),
                     file_offset: 0x44,
+                    module_id: None,
                     path: Some("/bin/test".to_string()),
                     build_id: Some("deadbeef".to_string()),
                     reason: None,

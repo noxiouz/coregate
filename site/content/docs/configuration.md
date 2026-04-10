@@ -101,6 +101,20 @@ Controls post-capture stack symbolization.
 - `mode: "local"`: symbolize in the collector with `blazesym`
 - `mode: "http"`: normalize locally and send the stack to a remote HTTP service
 
+HTTP mode uses protobuf-generated request and response types serialized as
+JSON. The shared schema lives in
+`crates/symbolizer-proto/proto/symbolizer.proto`.
+
+The HTTP request contains:
+
+- `provider`
+- `process`
+- `modules[]`
+- `frames[]`
+
+Each frame includes normalized file-offset data and can reference a module
+snapshot entry through `normalized.module_id`.
+
 ## `core`
 
 Storage policy for core files.

@@ -336,6 +336,7 @@ dependencies = [
  "collector-store",
  "collector-telemetry",
  "coregate-bpf-stack",
+ "coregate-symbolizer-proto",
  "libc",
  "prost",
  "prost-build",
@@ -361,7 +362,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blazesym",
+ "coregate-symbolizer-proto",
  "libbpf-rs",
+ "serde",
+]
+
+[[package]]
+name = "coregate-symbolizer-proto"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
  "serde",
 ]
 
