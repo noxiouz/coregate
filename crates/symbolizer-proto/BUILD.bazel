@@ -1,0 +1,23 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+cargo_build_script(
+    name = "build_script",
+    srcs = ["build.rs"],
+    build_script_env = {},
+    data = ["proto/symbolizer.proto"],
+    deps = all_crate_deps(build = True),
+)
+
+rust_library(
+    name = "coregate-symbolizer-proto",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "coregate_symbolizer_proto",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":build_script",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)

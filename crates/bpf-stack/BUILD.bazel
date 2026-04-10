@@ -2,16 +2,12 @@ load("@crates//:defs.bzl", "aliases", "all_crate_deps")
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
 rust_library(
-    name = "collector-store",
+    name = "coregate-bpf-stack",
     srcs = glob(["src/**/*.rs"]),
-    crate_name = "collector_store",
-    crate_features = ["sqlite"],
+    crate_name = "coregate_bpf_stack",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        "//crates/bpf-stack:coregate-bpf-stack",
-        "//crates/corefile:collector-core",
-        "//crates/limit:collector-limit",
-        "//crates/meta:collector-meta",
+        "//crates/symbolizer-proto:coregate-symbolizer-proto",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
     visibility = ["//visibility:public"],

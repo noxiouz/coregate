@@ -10,6 +10,11 @@ members = [
   "crates/symbolizer-proto",
   "crates/store",
   "crates/telemetry",
+  "crates/victim-crash",
+  "crates/vmtest",
+  "crates/vmtest-agent",
+  "crates/vmtest-protocol",
+  "crates/xtask",
 ]
 resolver = "2"
 

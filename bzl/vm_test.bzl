@@ -200,6 +200,8 @@ def vm_python_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [
     """
     inner_name = name + "_vm_inner"
     inner_tags = _merge_manual_tag(kwargs)
+    if "main" not in kwargs and "srcs" in kwargs and len(kwargs["srcs"]) > 0:
+        kwargs["main"] = kwargs["srcs"][0]
     py_test(
         name = inner_name,
         tags = inner_tags,

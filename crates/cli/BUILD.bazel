@@ -17,11 +17,13 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":build_script",
+        "//crates/bpf-stack:coregate-bpf-stack",
         "//crates/corefile:collector-core",
         "//crates/kernel:collector-kernel",
         "//crates/limit:collector-limit",
         "//crates/meta:collector-meta",
         "//crates/store:collector-store",
+        "//crates/symbolizer-proto:coregate-symbolizer-proto",
         "//crates/telemetry:collector-telemetry",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
