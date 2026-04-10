@@ -100,6 +100,8 @@ Controls post-capture stack symbolization.
 - `mode: "none"`: keep raw frames only
 - `mode: "local"`: symbolize in the collector with `blazesym`
 - `mode: "http"`: normalize locally and send the stack to a remote HTTP service
+- `mode: "debuginfod"`: normalize locally, fetch debuginfo via
+  `DEBUGINFOD_URLS`, and symbolize locally with `blazesym`
 
 HTTP mode uses protobuf-generated request and response types serialized as
 JSON. The shared schema lives in
@@ -114,6 +116,11 @@ The HTTP request contains:
 
 Each frame includes normalized file-offset data and can reference a module
 snapshot entry through `normalized.module_id`.
+
+Debuginfod mode uses the standard debuginfod build-id endpoint:
+`/buildid/<build-id>/debuginfo`. Downloads use the standard debuginfod
+client cache: `DEBUGINFOD_CACHE_PATH` when set, otherwise the platform
+cache directory, typically `~/.cache/debuginfod_client`.
 
 ## `core`
 

@@ -48,8 +48,8 @@ sudo cargo run -p coregate-bpf -- remove
 
 ## Remote symbolizer mode
 
-Coregate can skip live process symbolization and send normalized frames to a
-remote HTTP service instead.
+Coregate can skip live process symbolization and either send normalized frames
+to a remote HTTP service or fetch debuginfo through debuginfod.
 
 The HTTP body uses protobuf-generated message types serialized as JSON today.
 That keeps the schema shared between Coregate and a future gRPC service.
@@ -64,6 +64,23 @@ The remote service is expected to resolve normalized file offsets, for example
 by using `blazesym` against the referenced ELF path and module snapshot.
 
 Example config:
+
+```json
+{
+  "default": {
+    "symbolizer": {
+      "mode": "debuginfod"
+    }
+  }
+}
+```
+
+Debuginfod mode uses `DEBUGINFOD_URLS` and the standard
+`/buildid/<build-id>/debuginfo` endpoint. Downloads use the standard
+debuginfod client cache: `DEBUGINFOD_CACHE_PATH` when set, otherwise the
+platform cache directory, typically `~/.cache/debuginfod_client`.
+
+HTTP mode remains available for a Coregate-specific batch service:
 
 ```json
 {
