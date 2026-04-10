@@ -3,7 +3,7 @@
     <div class="hero-copy">
       <p class="eyebrow">Rust coredump collection for Linux</p>
       <h1>Collect coredumps. Keep the hot path short.</h1>
-      <p class="lede">Coregate captures Linux coredumps through `core_pattern`, legacy socket delivery, and protocol socket delivery. It extracts metadata worth querying, stores dumps with explicit policy, and can enrich records with BPF-captured user stacks.</p>
+      <p class="lede">Coregate captures Linux coredumps through <code>core_pattern</code>, legacy socket delivery, and protocol socket delivery. It extracts metadata worth querying, stores dumps with explicit policy, and can enrich records with BPF-captured user stacks.</p>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/docs/quickstart/" | relURL }}">Read the Quickstart</a>
         <a class="button button-secondary" href="{{ "/docs/" | relURL }}">Documentation</a>
@@ -36,7 +36,7 @@ coregate v0.1.0
   <section class="feature-grid">
     <div class="feature-card">
       <h3>Three ingress modes</h3>
-      <p>`handle` for classic `core_pattern`, `serve-legacy` for `@/path.sock`, and `serve` for `@@/path.sock` protocol mode.</p>
+      <p><code>handle</code> for classic <code>core_pattern</code>, <code>serve-legacy</code> for <code>@/path.sock</code>, and <code>serve</code> for <code>@@/path.sock</code> protocol mode.</p>
     </div>
     <div class="feature-card">
       <h3>Fast-path aware</h3>
@@ -52,15 +52,11 @@ coregate v0.1.0
     </div>
     <div class="feature-card">
       <h3>BPF stack capture</h3>
-      <p>Optional `do_coredump` tracing stores raw user frames, adds best-effort live `blazesym` symbols, and records normalized offsets for later symbolization.</p>
+      <p>Optional <code>do_coredump</code> tracing stores raw user frames, adds best-effort live <code>blazesym</code> symbols, and records normalized offsets for later symbolization.</p>
     </div>
     <div class="feature-card">
       <h3>Kernel-version aware</h3>
-      <p>`coregate setup` refuses unsupported socket modes based on the running kernel version instead of printing invalid setup commands.</p>
-    </div>
-    <div class="feature-card">
-      <h3>VM integration tests</h3>
-      <p>QEMU-based test harness runs Python, Rust, and shell tests inside real Linux guests. Bazel macros make writing new VM tests a one-liner.</p>
+      <p><code>coregate setup</code> refuses unsupported socket modes based on the running kernel version instead of printing invalid setup commands.</p>
     </div>
   </section>
 
@@ -73,7 +69,7 @@ coregate v0.1.0
     <div class="step-card">
       <span class="step-num">1</span>
       <h3>Choose the kernel mode</h3>
-      <p>Use `handle` for wide compatibility, `serve-legacy` for Linux 6.16+, or `serve` for the 6.19+ protocol path.</p>
+      <p>Use <code>handle</code> for wide compatibility, <code>serve-legacy</code> for Linux 6.16+, or <code>serve</code> for the 6.19+ protocol path.</p>
       <pre><code>coregate setup handle
 coregate setup server-legacy
 coregate setup server</code></pre>
@@ -107,22 +103,22 @@ sudo coregate -- debug-bpf-stats --json</code></pre>
     <div class="command-card">
       <h3>Handle mode</h3>
       <pre><code>sudo coregate setup handle --apply</code></pre>
-      <p>Classic `core_pattern` pipe-helper integration.</p>
+      <p>Classic <code>core_pattern</code> pipe-helper integration.</p>
     </div>
     <div class="command-card">
       <h3>Legacy socket mode</h3>
       <pre><code>sudo coregate setup server-legacy --apply</code></pre>
-      <p>Enables `@/path.sock` on Linux 6.16 and newer.</p>
+      <p>Enables <code>@/path.sock</code> on Linux 6.16 and newer.</p>
     </div>
     <div class="command-card">
       <h3>Protocol socket mode</h3>
       <pre><code>sudo coregate serve --apply-sysctl</code></pre>
-      <p>Enables `@@/path.sock` on Linux 6.19 and newer.</p>
+      <p>Enables <code>@@/path.sock</code> on Linux 6.19 and newer.</p>
     </div>
     <div class="command-card">
       <h3>BPF tracer</h3>
       <pre><code>sudo coregate-bpf install --force</code></pre>
-      <p>Loads and pins the `do_coredump` stack tracer.</p>
+      <p>Loads and pins the <code>do_coredump</code> stack tracer.</p>
     </div>
   </section>
 
@@ -138,8 +134,7 @@ cargo build -p coregate
 cargo build -p coregate-bpf
 
 # Or Bazel
-bazel build //crates/cli:coregate
-bazel test //tests/vm:core_pattern_segv</code></pre>
+bazel build //crates/cli:coregate</code></pre>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/docs/quickstart/" | relURL }}">Get Started</a>
         <a class="button button-secondary" href="{{ .Site.Params.repo }}">GitHub</a>
