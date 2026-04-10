@@ -9,6 +9,7 @@ bazel-.*
 .claude/
 .vmdebug/
 site-public/
+site/public/
 site/.hugo_build.lock
 
 # Editor and OS noise
