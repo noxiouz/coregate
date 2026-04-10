@@ -58,6 +58,7 @@ pub fn check_and_consume_with_file(
 
     let mut file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(state_path)?;

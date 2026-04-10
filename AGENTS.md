@@ -23,7 +23,7 @@ Docs and examples live in `docs/`. The GitHub Pages site is under `site/`. Bazel
 
 ## Coding Style & Naming Conventions
 
-Use standard Rust formatting and keep code ASCII unless a file already requires Unicode. Run `cargo fmt` before submitting Rust changes. Prefer small, focused crates and explicit names: `serve-legacy`, `server-segv`, `thread-crash`. Keep kernel-facing behavior concrete and avoid hidden magic in setup paths.
+Use standard Rust formatting and keep code ASCII unless a file already requires Unicode. Run `cargo fmt` and `cargo clippy --workspace --all-targets` before submitting Rust changes. Prefer small, focused crates and explicit names: `serve-legacy`, `server-segv`, `thread-crash`. Keep kernel-facing behavior concrete and avoid hidden magic in setup paths.
 
 ## Testing Guidelines
 

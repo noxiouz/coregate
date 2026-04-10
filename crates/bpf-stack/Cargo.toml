@@ -8,5 +8,9 @@ license.workspace = true
 anyhow.workspace = true
 blazesym.workspace = true
 coregate-symbolizer-proto = { path = "../symbolizer-proto" }
+debuginfod = { version = "0.3.0", default-features = false, features = ["fs-cache", "reqwest"] }
 libbpf-rs.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

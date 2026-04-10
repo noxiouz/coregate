@@ -10,6 +10,8 @@ pub use coregate_symbolizer_proto::symbolizer::{
     SymbolizationRequest as RemoteSymbolizationRequest,
     SymbolizationResponse as RemoteSymbolizationResponse, SymbolizedFrame as RemoteSymbolizedFrame,
 };
+use debuginfod::reqwest::blocking::Client as ReqwestBlockingClient;
+use debuginfod::{BuildId, CachingClient, Client as DebugInfoClient};
 use libbpf_rs::{MapCore, MapFlags, MapHandle};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -269,55 +271,138 @@ pub fn symbolize_remote_request_with_blazesym(
         };
 
         let src = Source::Elf(Elf::new(path));
-        match symbolizer
-            .symbolize_single(&src, Input::FileOffset(normalized.file_offset))
-            .context("symbolize normalized file offset")
-        {
-            Ok(Symbolized::Sym(sym)) => {
-                let (file, line, column) = if let Some(info) = sym.code_info {
-                    (
-                        Some(info.to_path().display().to_string()),
-                        info.line,
-                        info.column.map(u32::from),
-                    )
-                } else {
-                    (None, None, None)
-                };
-                frames.push(RemoteSymbolizedFrame {
-                    symbol: Some(sym.name.into_owned()),
-                    module: sym
-                        .module
-                        .map(|module| module.to_string_lossy().into_owned()),
-                    offset: Some(sym.offset as u64),
-                    file,
-                    line,
-                    column,
-                    reason: None,
-                });
-            }
-            Ok(Symbolized::Unknown(reason)) => {
-                frames.push(RemoteSymbolizedFrame {
-                    symbol: None,
-                    module: None,
-                    offset: None,
-                    file: None,
-                    line: None,
-                    column: None,
-                    reason: Some(reason.to_string()),
-                });
-            }
-            Err(err) => {
-                frames.push(RemoteSymbolizedFrame {
-                    symbol: None,
-                    module: None,
-                    offset: None,
-                    file: None,
-                    line: None,
-                    column: None,
-                    reason: Some(err.to_string()),
-                });
+        frames.push(symbolize_file_offset(
+            &symbolizer,
+            &src,
+            normalized.file_offset,
+        ));
+    }
+
+    Ok(RemoteSymbolizationResponse { frames })
+}
+
+fn symbolize_file_offset(
+    symbolizer: &Symbolizer,
+    src: &Source<'_>,
+    file_offset: u64,
+) -> RemoteSymbolizedFrame {
+    match symbolizer.symbolize_single(src, Input::FileOffset(file_offset)) {
+        Ok(Symbolized::Sym(sym)) => {
+            let (file, line, column) = if let Some(info) = sym.code_info {
+                (
+                    Some(info.to_path().display().to_string()),
+                    info.line,
+                    info.column.map(u32::from),
+                )
+            } else {
+                (None, None, None)
+            };
+            RemoteSymbolizedFrame {
+                symbol: Some(sym.name.into_owned()),
+                module: sym
+                    .module
+                    .map(|module| module.to_string_lossy().into_owned()),
+                offset: Some(sym.offset as u64),
+                file,
+                line,
+                column,
+                reason: None,
             }
         }
+        Ok(Symbolized::Unknown(reason)) => remote_reason(reason.to_string()),
+        Err(err) => remote_reason(err.to_string()),
+    }
+}
+
+fn remote_reason(value: impl Into<String>) -> RemoteSymbolizedFrame {
+    RemoteSymbolizedFrame {
+        symbol: None,
+        module: None,
+        offset: None,
+        file: None,
+        line: None,
+        column: None,
+        reason: Some(value.into()),
+    }
+}
+
+pub struct DebuginfodClient {
+    client: CachingClient,
+}
+
+impl DebuginfodClient {
+    pub fn new(urls: Vec<String>, cache_dir: PathBuf) -> Result<Self> {
+        let client = DebugInfoClient::builder()
+            .http_client(ReqwestBlockingClient::new())
+            .build(urls.iter().map(String::as_str))
+            .context("build debuginfod client")?
+            .context("debuginfod client requires at least one URL")?;
+        let client =
+            CachingClient::new(client, cache_dir).context("build caching debuginfod client")?;
+        Ok(Self { client })
+    }
+
+    pub fn from_env() -> Result<Option<Self>> {
+        let client = DebugInfoClient::builder()
+            .http_client(ReqwestBlockingClient::new())
+            .build_from_env()
+            .context("build debuginfod client from DEBUGINFOD_URLS")?;
+        client
+            .map(|client| {
+                CachingClient::from_env(client).context("build caching debuginfod client")
+            })
+            .transpose()
+            .map(|client| client.map(|client| Self { client }))
+    }
+
+    fn fetch_debuginfo(&self, build_id: &str) -> Result<Option<PathBuf>> {
+        self.client
+            .fetch_debug_info(&BuildId::formatted(build_id.to_owned()))
+            .with_context(|| format!("fetch debuginfo for build-id {build_id}"))
+    }
+}
+
+pub fn symbolize_remote_request_with_debuginfod(
+    request: &RemoteSymbolizationRequest,
+    client: &DebuginfodClient,
+) -> Result<RemoteSymbolizationResponse> {
+    let symbolizer = Symbolizer::new();
+    let mut frames = Vec::with_capacity(request.frames.len());
+
+    for frame in &request.frames {
+        let Some(normalized) = &frame.normalized else {
+            frames.push(remote_reason("missing_normalized_frame"));
+            continue;
+        };
+        if normalized.kind != "elf" {
+            frames.push(remote_reason(format!(
+                "unsupported_normalized_kind:{}",
+                normalized.kind
+            )));
+            continue;
+        }
+        let Some(module) = normalized
+            .module_id
+            .and_then(|module_id| request.modules.iter().find(|module| module.id == module_id))
+        else {
+            frames.push(remote_reason("missing_module_id"));
+            continue;
+        };
+        let Some(build_id) = module.build_id.as_deref() else {
+            frames.push(remote_reason("missing_module_build_id"));
+            continue;
+        };
+        let Some(debuginfo) = client.fetch_debuginfo(build_id)? else {
+            frames.push(remote_reason(format!("debuginfod_miss:{build_id}")));
+            continue;
+        };
+
+        let src = Source::Elf(Elf::new(&debuginfo));
+        frames.push(symbolize_file_offset(
+            &symbolizer,
+            &src,
+            normalized.file_offset,
+        ));
     }
 
     Ok(RemoteSymbolizationResponse { frames })
@@ -570,6 +655,10 @@ fn clean_deleted_suffix(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+    use tempfile::TempDir;
 
     #[inline(never)]
     fn marker_function() {}
@@ -646,5 +735,115 @@ mod tests {
         assert_eq!(frame.line, Some(12));
         assert_eq!(frame.column, Some(3));
         assert!(frame.normalized.is_some());
+    }
+
+    #[test]
+    fn debuginfod_client_fetches_and_caches_by_build_id() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let payload = b"debug artifact".to_vec();
+
+        let server = thread::spawn({
+            let payload = payload.clone();
+            move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 1024];
+                let n = stream.read(&mut buf).unwrap();
+                let request = std::str::from_utf8(&buf[..n]).unwrap();
+                assert!(request.starts_with(
+                    "GET /buildid/0123456789abcdef0123456789abcdef01234567/debuginfo "
+                ));
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                )
+                .unwrap();
+                stream.write_all(&payload).unwrap();
+            }
+        });
+
+        let cache = TempDir::new().unwrap();
+        let client =
+            DebuginfodClient::new(vec![format!("http://{addr}")], cache.path().to_path_buf())
+                .unwrap();
+        let path = client
+            .fetch_debuginfo("0123456789abcdef0123456789abcdef01234567")
+            .unwrap()
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), payload);
+
+        let cached = client
+            .fetch_debuginfo("0123456789abcdef0123456789abcdef01234567")
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached, path);
+    }
+
+    #[test]
+    fn debuginfod_symbolizes_normalized_frame() {
+        let mut stack = StackRecord {
+            provider: "bpf".to_string(),
+            frames: vec![StackFrame {
+                addr: marker_function as *const () as usize as u64,
+                symbol: None,
+                module: None,
+                offset: None,
+                file: None,
+                line: None,
+                column: None,
+                reason: None,
+                normalized: None,
+            }],
+        };
+        let pid = std::process::id();
+        normalize_stack_record(pid, &mut stack).unwrap();
+        let request = build_remote_symbolization_request(pid, &stack).unwrap();
+        let normalized = request.frames[0].normalized.as_ref().unwrap();
+        let module = normalized
+            .module_id
+            .and_then(|module_id| request.modules.iter().find(|module| module.id == module_id))
+            .unwrap();
+        let build_id = module.build_id.clone().unwrap();
+        let payload = fs::read(std::env::current_exe().unwrap()).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn({
+            let payload = payload.clone();
+            let expected = format!("GET /buildid/{build_id}/debuginfo ");
+            move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 1024];
+                let n = stream.read(&mut buf).unwrap();
+                let request = std::str::from_utf8(&buf[..n]).unwrap();
+                assert!(request.starts_with(&expected), "{request}");
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                )
+                .unwrap();
+                stream.write_all(&payload).unwrap();
+            }
+        });
+
+        let cache = TempDir::new().unwrap();
+        let client =
+            DebuginfodClient::new(vec![format!("http://{addr}")], cache.path().to_path_buf())
+                .unwrap();
+        let response = symbolize_remote_request_with_debuginfod(&request, &client).unwrap();
+        server.join().unwrap();
+
+        let frame = &response.frames[0];
+        assert!(
+            frame
+                .symbol
+                .as_deref()
+                .is_some_and(|symbol| symbol.contains("marker_function")),
+            "{frame:?}"
+        );
+        assert!(frame.reason.is_none(), "{frame:?}");
     }
 }

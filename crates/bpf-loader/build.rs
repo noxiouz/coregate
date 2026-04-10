@@ -8,7 +8,7 @@ fn main() {
     libbpf_cargo::SkeletonBuilder::new()
         .source(src)
         .clang_args(["-Isrc/bpf"])
-        .build_and_generate(&out.join("stacktrace.skel.rs"))
+        .build_and_generate(out.join("stacktrace.skel.rs"))
         .expect("generate BPF skeleton");
 
     println!("cargo:rerun-if-changed=src/bpf/stacktrace.bpf.c");

@@ -210,3 +210,24 @@ Status: first capture path complete
 - Collector reads frames from the pinned map
 - Symbolize later in user space
 - Fallback to GDB provider
+
+## Debuginfod Symbolization Plan
+
+Status: implementation starting
+
+- Do not build a Coregate-specific symbol indexer.
+- Use debuginfod as the artifact distribution/indexing layer.
+- Keep Coregate-specific value in:
+  - BPF stack capture
+  - process/module normalization
+  - crash-record integration
+  - optional batch frame symbolization
+- Symbolization flow:
+  - normalize BPF frame addresses to file offsets
+  - map each frame to a module build-id
+  - fetch debuginfo via `GET /buildid/<build-id>/debuginfo`
+  - cache the downloaded debuginfo locally
+  - symbolize with `blazesym` over the downloaded artifact
+- Server discovery:
+  - use `DEBUGINFOD_URLS` as the debuginfod server list
+  - keep paths as diagnostics only, not lookup keys

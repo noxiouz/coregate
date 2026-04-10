@@ -228,7 +228,7 @@ fn statvfs(path: &Path) -> Result<FsStats> {
         return Err(std::io::Error::last_os_error()).context("statvfs output dir");
     }
     let stat = unsafe { stat.assume_init() };
-    let block_size = stat.f_frsize.max(stat.f_bsize) as u64;
+    let block_size = stat.f_frsize.max(stat.f_bsize);
     Ok(FsStats {
         total_bytes: block_size.saturating_mul(stat.f_blocks),
         available_bytes: block_size.saturating_mul(stat.f_bavail),

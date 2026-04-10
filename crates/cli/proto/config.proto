@@ -117,6 +117,8 @@ enum SymbolizerMode {
   SYMBOLIZER_LOCAL = 2;
   // Normalize locally and send frames to a remote HTTP service.
   SYMBOLIZER_HTTP = 3;
+  // Normalize locally, fetch debuginfo through debuginfod, and symbolize locally.
+  SYMBOLIZER_DEBUGINFOD = 4;
 }
 
 // Simple HTTP JSON symbolizer backend.

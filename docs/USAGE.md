@@ -92,6 +92,12 @@ Notes:
 - the remote service is expected to symbolize normalized file offsets, for example with `blazesym`
 - the HTTP body uses protobuf-generated message types serialized as JSON
 - the shared schema lives in `crates/symbolizer-proto/proto/symbolizer.proto`
+- debuginfod-backed symbolization can be enabled with:
+  - `"symbolizer": { "mode": "debuginfod" }`
+- debuginfod mode uses the standard debuginfod client settings:
+  - `DEBUGINFOD_URLS` for server URLs
+  - `DEBUGINFOD_CACHE_PATH` for an explicit cache path
+  - otherwise the platform cache directory, typically `~/.cache/debuginfod_client`
 - current validation was done on Linux `6.6.87.2-microsoft-standard-WSL2`
 
 Remote HTTP contract:

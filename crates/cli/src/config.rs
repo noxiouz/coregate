@@ -68,6 +68,7 @@ pub struct EffectiveCoreConfig {
 pub enum EffectiveSymbolizerConfig {
     None,
     Local,
+    Debuginfod,
     Http(EffectiveHttpSymbolizerConfig),
 }
 
@@ -118,10 +119,10 @@ pub fn resolve_config(
     }
 
     for override_cfg in &root.overrides {
-        if matches_metadata(override_cfg.matcher.as_ref(), metadata) {
-            if let Some(cfg) = &override_cfg.config {
-                apply_collector_config(&mut resolved, cfg)?;
-            }
+        if matches_metadata(override_cfg.matcher.as_ref(), metadata)
+            && let Some(cfg) = &override_cfg.config
+        {
+            apply_collector_config(&mut resolved, cfg)?;
         }
     }
 
@@ -253,6 +254,9 @@ fn apply_symbolizer_config(
             proto::SymbolizerMode::Unspecified => {}
             proto::SymbolizerMode::SymbolizerNone => *dst = EffectiveSymbolizerConfig::None,
             proto::SymbolizerMode::SymbolizerLocal => *dst = EffectiveSymbolizerConfig::Local,
+            proto::SymbolizerMode::SymbolizerDebuginfod => {
+                *dst = EffectiveSymbolizerConfig::Debuginfod
+            }
             proto::SymbolizerMode::SymbolizerHttp => {
                 let http = src
                     .http

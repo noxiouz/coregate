@@ -9,8 +9,9 @@ use collector_meta::{CrashMetadata, collect_basic, enrich_from_binary};
 use collector_store::{CrashRecord, DumpRecord, TelemetryRecord, append_json_line};
 use collector_telemetry::StageTimer;
 use coregate_bpf_stack::{
-    RemoteSymbolizationResponse, apply_remote_symbolization, build_remote_symbolization_request,
-    normalize_stack_record, read_pinned_stack, read_pinned_stats, symbolize_stack_record,
+    DebuginfodClient, RemoteSymbolizationResponse, apply_remote_symbolization,
+    build_remote_symbolization_request, normalize_stack_record, read_pinned_stack,
+    read_pinned_stats, symbolize_remote_request_with_debuginfod, symbolize_stack_record,
 };
 use reqwest::blocking::Client;
 use std::fs;
@@ -189,13 +190,13 @@ fn run_debug_bpf_stack(args: DebugBpfStackArgs) -> Result<()> {
     let mut stack = read_pinned_stack(args.pid, !args.keep)
         .with_context(|| format!("read pinned BPF stack for pid {}", args.pid))?;
 
-    if let Some(stack_record) = stack.as_mut() {
-        if let Err(err) = symbolize_stack_record(args.pid, stack_record) {
-            eprintln!(
-                "coregate: failed to symbolize pinned BPF stack for pid {}: {err:#}",
-                args.pid
-            );
-        }
+    if let Some(stack_record) = stack.as_mut()
+        && let Err(err) = symbolize_stack_record(args.pid, stack_record)
+    {
+        eprintln!(
+            "coregate: failed to symbolize pinned BPF stack for pid {}: {err:#}",
+            args.pid
+        );
     }
 
     if args.json {
@@ -528,13 +529,13 @@ fn process_dump<R: Read>(
     let stack = match u32::try_from(request.pid) {
         Ok(pid) => match read_pinned_stack(pid, true) {
             Ok(mut stack) => {
-                if let Some(stack_record) = stack.as_mut() {
-                    if let Err(err) = symbolize_bpf_stack(&config, pid, stack_record) {
-                        eprintln!(
-                            "coregate: failed to symbolize pinned BPF stack for pid {}: {err:#}",
-                            request.pid
-                        );
-                    }
+                if let Some(stack_record) = stack.as_mut()
+                    && let Err(err) = symbolize_bpf_stack(&config, pid, stack_record)
+                {
+                    eprintln!(
+                        "coregate: failed to symbolize pinned BPF stack for pid {}: {err:#}",
+                        request.pid
+                    );
                 }
                 stack
             }
@@ -584,6 +585,21 @@ fn symbolize_bpf_stack(
     match &config.symbolizer {
         EffectiveSymbolizerConfig::None => Ok(()),
         EffectiveSymbolizerConfig::Local => symbolize_stack_record(pid, stack),
+        EffectiveSymbolizerConfig::Debuginfod => {
+            normalize_stack_record(pid, stack).context("prepare debuginfod symbolization input")?;
+            let Some(client) =
+                DebuginfodClient::from_env().context("initialize debuginfod client")?
+            else {
+                return Ok(());
+            };
+            let request = build_remote_symbolization_request(pid, stack)
+                .context("build debuginfod symbolization request")?;
+            let response = symbolize_remote_request_with_debuginfod(&request, &client)
+                .context("symbolize stack with debuginfod")?;
+            apply_remote_symbolization(stack, response)
+                .context("apply debuginfod symbolization response")?;
+            Ok(())
+        }
         EffectiveSymbolizerConfig::Http(http) => {
             normalize_stack_record(pid, stack).context("prepare remote symbolization input")?;
             let request = build_remote_symbolization_request(pid, stack)
@@ -647,8 +663,8 @@ fn is_storage_reserve_refusal(err: &anyhow::Error) -> bool {
 fn render_rendered_setup(args: &SetupArgs, pattern: &str) -> String {
     match args.output {
         SetupOutput::Pattern => pattern.to_string(),
-        SetupOutput::Sysctl => render_sysctl(&pattern, args),
-        SetupOutput::Shell => render_shell(&pattern, args),
+        SetupOutput::Sysctl => render_sysctl(pattern, args),
+        SetupOutput::Shell => render_shell(pattern, args),
     }
 }
 
@@ -946,7 +962,7 @@ const PIDFD_INFO_EXIT: u64 = 1 << 3;
 const PIDFD_INFO_COREDUMP: u64 = 1 << 4;
 
 fn pidfd_info(pidfd: RawFd) -> Result<CoregatePidfdInfo> {
-    let result = (|| -> Result<CoregatePidfdInfo> {
+    (|| -> Result<CoregatePidfdInfo> {
         let mut info = CoregatePidfdInfo {
             mask: PIDFD_INFO_PID | PIDFD_INFO_CREDS | PIDFD_INFO_EXIT | PIDFD_INFO_COREDUMP,
             cgroupid: 0,
@@ -970,8 +986,7 @@ fn pidfd_info(pidfd: RawFd) -> Result<CoregatePidfdInfo> {
             return Err(std::io::Error::last_os_error()).context("ioctl(PIDFD_GET_INFO)");
         }
         Ok(info)
-    })();
-    result
+    })()
 }
 
 #[repr(C)]
