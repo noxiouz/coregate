@@ -32,7 +32,10 @@ vm_rust_test / vm_python_test / vm_sh_test   (convenience macros)
 ## Quick start
 
 ```bash
-# Run a VM test (downloads ~660MB Debian image on first run)
+# Run all VM tests (downloads ~660MB Debian image on first run)
+bazel test //tests/vm:vm_tests --test_output=errors
+
+# Run one VM test
 bazel test //tests/vm:core_pattern_segv --test_output=streamed
 
 # List all VM test targets
@@ -41,6 +44,8 @@ bazel query 'kind("_vm_test rule", //...)'
 
 Repository VM scenarios are tagged `manual`; default `bazel test //...` skips
 them so normal builds do not require QEMU, KVM, or a downloaded guest image.
+Wildcard package patterns such as `bazel test //tests/vm/...` skip them for the
+same reason; use `//tests/vm:vm_tests` or explicit labels.
 
 ## Prerequisites
 

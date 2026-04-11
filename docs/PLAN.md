@@ -149,13 +149,15 @@ limiters, config sources, and symbolizers can perform real async I/O.
   targets to `//:linux_x86_64_musl`; the host-side VM runner stays in exec
   config
 - Bazel Python VM tests are source-only and run via guest `/usr/bin/python3`
-- Bazel handle-mode VM tests use a no-SQLite `//:coregate_guest` build until a
-  musl C toolchain is wired for bundled SQLite
+- Bazel handle-mode VM tests use a no-SQLite `//:coregate_guest` musl build;
+  Bazel guest configs disable `metadata_sqlite` until a musl-compatible SQLite
+  C toolchain is wired
 - Bazel socket-mode VM tests use `vm_kernel_from_guest_packages` to produce a
   Linux 6.19 kernel/initrd from the Debian rootfs by installing Ubuntu mainline
   kernel packages inside a VM action and exporting declared outputs
 - Bazel VM scenarios are tagged `manual` so default `bazel test //...` does not
-  require QEMU/KVM; run specific `//tests/vm:*` targets explicitly
+  require QEMU/KVM; run `//tests/vm:vm_tests` or specific `//tests/vm:*`
+  targets explicitly
 
 ## Roadmap
 

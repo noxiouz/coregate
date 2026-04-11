@@ -13,6 +13,7 @@ import unittest
 RECORDS_JSONL = "/var/lib/coregate/records.jsonl"
 CORES_DIR = "/var/lib/coregate/cores"
 SQLITE_DB = "/var/lib/coregate/records.sqlite"
+CONFIG = "/etc/coregate/config.json"
 
 
 class CorePatternSegvTest(unittest.TestCase):
@@ -48,7 +49,10 @@ class CorePatternSegvTest(unittest.TestCase):
         self.assertGreater(len(cores), 0, "expected at least one core file")
 
     def test_sqlite_artifact(self):
-        """SQLite metadata database should be created."""
+        """SQLite metadata database should be created when configured."""
+        if not _sqlite_configured():
+            self.skipTest("SQLite sink is disabled for this guest build")
+
         self.assertTrue(
             os.path.exists(SQLITE_DB),
             f"{SQLITE_DB} should exist",
@@ -65,6 +69,16 @@ def _last_record():
     with open(RECORDS_JSONL) as f:
         lines = [l.strip() for l in f if l.strip()]
     return json.loads(lines[-1])
+
+
+def _sqlite_configured():
+    try:
+        with open(CONFIG) as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        return False
+    default = config.get("default", {})
+    return bool(default.get("metadata_sqlite"))
 
 
 if __name__ == "__main__":

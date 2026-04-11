@@ -29,8 +29,9 @@ The Bazel `coregate` target enables the default SQLite metadata path and keeps
 collector-side BPF readout disabled. BPF stack support is opt-in and tagged
 `manual` so `bazel build //...` does not build `libbpf-sys`.
 
-The `coregate_guest` target disables SQLite for now. That keeps the VM guest
-binary fully static without needing a musl C toolchain for bundled SQLite.
+The `coregate_guest` target is the static musl variant used by VM tests. It
+keeps collector-side BPF readout and SQLite disabled so it does not require
+linking C dependencies into the guest binary.
 
 ## Project structure
 
@@ -85,9 +86,13 @@ QEMU-backed VM tests are tagged `manual`, so default `bazel test //...` does
 not require KVM or downloaded VM images. Run a scenario explicitly when needed:
 
 ```bash
+bazel test //tests/vm:vm_tests --test_output=errors
 bazel test //tests/vm:core_pattern_segv --test_output=streamed
 bazel test //tests/vm:server_segv //tests/vm:server_legacy_segv --test_output=errors
 ```
+
+`bazel test //tests/vm/...` also skips the VM scenarios because they are
+`manual`. Use `//tests/vm:vm_tests` to run the explicit suite.
 
 The socket-mode targets use `//tests/vm:linux_6_19_kernel`, which Bazel
 generates from the Debian rootfs with `vm_kernel_from_guest_packages`. The rule

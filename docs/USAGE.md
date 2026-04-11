@@ -184,8 +184,13 @@ Bazel can produce the 6.19 kernel/initrd pair from the Debian rootfs and run
 both socket protocols without pre-populated `.cache` files:
 
 ```bash
+bazel test //tests/vm:vm_tests --test_output=errors
 bazel test //tests/vm:server_legacy_segv //tests/vm:server_segv --test_output=errors
 ```
+
+The VM targets are tagged `manual`, so wildcard commands such as
+`bazel test //tests/vm/...` intentionally skip them. Use the explicit
+`//tests/vm:vm_tests` suite or individual test labels.
 
 Those targets use `vm_kernel_from_guest_packages` to boot the rootfs, install
 the requested Ubuntu mainline kernel packages, run `update-initramfs`, and

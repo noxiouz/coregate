@@ -2,7 +2,7 @@
   "default": {
     "output_dir": "/var/lib/coregate/cores",
     "metadata_jsonl": "/var/lib/coregate/records.jsonl",
-    "metadata_sqlite": "/var/lib/coregate/records.sqlite",
+    "metadata_sqlite": "",
     "limit_state_file": "/var/lib/coregate/ratelimit.json",
     "respect_dumpable": true,
     "package_lookup": false,

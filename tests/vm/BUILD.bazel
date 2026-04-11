@@ -159,6 +159,23 @@ vm_python_test(
     tags = VM_TAGS,
 )
 
+test_suite(
+    name = "vm_tests",
+    tests = [
+        ":core_pattern_segv",
+        ":deleted_exe",
+        ":dumpable_off",
+        ":server_legacy_segv",
+        ":server_segv",
+        ":storage_refused",
+        ":thread_crash",
+    ],
+    tags = [
+        "manual",
+        "requires-vm",
+    ],
+)
+
 # ---------------------------------------------------------------------------
 # Smoke test (shell)
 # ---------------------------------------------------------------------------
