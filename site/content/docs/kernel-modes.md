@@ -45,6 +45,42 @@ Example:
 This mode is exposed as `coregate serve` and feeds the same module runtime as
 handle mode.
 
+## Socket Activation
+
+Both socket modes support systemd socket activation. When `LISTEN_PID` and
+`LISTEN_FDS` describe exactly one inherited listener, Coregate uses fd `3`
+instead of binding the path itself. The activated socket must be a listening
+Unix stream socket and its path must match `--socket-address`.
+
+Example `coregate.socket`:
+
+```ini
+[Socket]
+ListenStream=/run/coregate-coredump.socket
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
+```
+
+Example 6.19+ service:
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/coregate serve \
+    --socket-address @@/run/coregate-coredump.socket \
+    --config /etc/coregate/config.json
+```
+
+For legacy mode, use the same socket unit with:
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/coregate serve-legacy \
+    --socket-address @/run/coregate-coredump.socket \
+    --config /etc/coregate/config.json
+```
+
 ## Choosing a Mode
 
 | Mode | Kernel | Pattern | Current status |

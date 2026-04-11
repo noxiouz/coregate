@@ -13,6 +13,7 @@ Last updated: 2026-04-11
 - root `bin/coregate.rs` binary that only supplies the default runtime builder
 - async-capable module trait surface for storage, config, limiter, and enrichment
 - async `serve` and `serve-legacy` socket ingress adapters wired into the root binary
+- systemd socket activation for `serve` and `serve-legacy` with a single inherited Unix stream listener
 - local metadata extraction from `/proc` and ELF data
 - local JSONL sink and default-enabled SQLite sink
 - compressed core storage (`zstd`, `xz`) and sparse uncompressed writes
@@ -115,7 +116,9 @@ Canonical `core_pattern` example:
 
 Setup is synchronous because it only renders or writes sysctls. Socket modes are
 async ingress adapters: `serve-legacy` uses `@/path.sock` on Linux `>= 6.16`;
-`serve` uses `@@/path.sock` on Linux `>= 6.19`.
+`serve` uses `@@/path.sock` on Linux `>= 6.19`. Under systemd socket activation
+they use the single inherited listener fd instead of binding the socket path
+themselves.
 
 Current collection flow:
 

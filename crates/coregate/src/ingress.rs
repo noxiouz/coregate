@@ -14,10 +14,12 @@ use crate::setup::{
     render_server_legacy_pattern, render_server_pattern,
 };
 use anyhow::{Context, Result};
+use std::env;
 use std::fs;
 use std::io;
 use std::mem::size_of;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::unix::net::UnixListener as StdUnixListener;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -62,18 +64,20 @@ where
 {
     let socket_path = protocol_server_socket_path(&options.socket_address)?
         .context("server mode requires a socket address of the form '@@/absolute/path.sock'")?;
-    let listener = bind_stream_coredump_listener(&socket_path)
-        .with_context(|| format!("bind coredump listener at {}", socket_path.display()))?;
+    let listener = stream_coredump_listener(&socket_path)
+        .with_context(|| format!("create coredump listener at {}", socket_path.display()))?;
     let pattern = render_server_pattern(Some(&options.socket_address))?;
     ensure_core_pattern_len(&pattern)?;
     eprintln!(
-        "coregate: listening for 6.19 coredumps on {}",
-        socket_path.display()
+        "coregate: listening for 6.19 coredumps on {} ({})",
+        socket_path.display(),
+        listener.origin
     );
     eprintln!("coregate: kernel.core_pattern should be {}", pattern);
 
     loop {
         let (conn, _) = listener
+            .listener
             .accept()
             .await
             .context("accept coredump connection")?;
@@ -98,19 +102,25 @@ where
     let socket_path = legacy_server_socket_path(&options.socket_address)?.context(
         "server-legacy mode requires a socket address of the form '@/absolute/path.sock'",
     )?;
-    let listener = bind_stream_coredump_listener(&socket_path)
-        .with_context(|| format!("bind legacy coredump listener at {}", socket_path.display()))?;
+    let listener = stream_coredump_listener(&socket_path).with_context(|| {
+        format!(
+            "create legacy coredump listener at {}",
+            socket_path.display()
+        )
+    })?;
     let pattern = render_server_legacy_pattern(Some(&options.socket_address))?;
     ensure_core_pattern_len(&pattern)?;
     eprintln!(
-        "coregate: listening for 6.16 coredumps on {}",
-        socket_path.display()
+        "coregate: listening for 6.16 coredumps on {} ({})",
+        socket_path.display(),
+        listener.origin
     );
     eprintln!("coregate: kernel.core_pattern should be {}", pattern);
 
     loop {
         eprintln!("coregate: waiting for legacy coredump connection");
         let (conn, _) = listener
+            .listener
             .accept()
             .await
             .context("accept legacy coredump connection")?;
@@ -230,6 +240,44 @@ fn protocol_server_socket_path(socket_address: &str) -> Result<Option<PathBuf>> 
     Ok(None)
 }
 
+struct CoredumpListener {
+    listener: UnixListener,
+    origin: ListenerOrigin,
+}
+
+#[derive(Debug)]
+enum ListenerOrigin {
+    Bound,
+    SystemdActivation { fd: RawFd },
+}
+
+impl std::fmt::Display for ListenerOrigin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bound => f.write_str("bound by coregate"),
+            Self::SystemdActivation { fd } => write!(f, "systemd socket activation fd {fd}"),
+        }
+    }
+}
+
+fn stream_coredump_listener(socket_path: &Path) -> Result<CoredumpListener> {
+    if let Some(fd) = systemd_activation_fd()? {
+        let listener = activated_stream_coredump_listener(fd, socket_path)
+            .with_context(|| format!("use systemd socket activation fd {fd}"))?;
+        return Ok(CoredumpListener {
+            listener,
+            origin: ListenerOrigin::SystemdActivation { fd },
+        });
+    }
+
+    let listener = bind_stream_coredump_listener(socket_path)
+        .with_context(|| format!("bind {}", socket_path.display()))?;
+    Ok(CoredumpListener {
+        listener,
+        origin: ListenerOrigin::Bound,
+    })
+}
+
 fn bind_stream_coredump_listener(socket_path: &Path) -> Result<UnixListener> {
     anyhow::ensure!(
         socket_path.is_absolute(),
@@ -248,6 +296,145 @@ fn bind_stream_coredump_listener(socket_path: &Path) -> Result<UnixListener> {
         }
     }
     UnixListener::bind(socket_path).with_context(|| format!("bind {}", socket_path.display()))
+}
+
+fn systemd_activation_fd() -> Result<Option<RawFd>> {
+    let current_pid = unsafe { libc::getpid() } as u32;
+    systemd_activation_fd_from_values(
+        current_pid,
+        env::var("LISTEN_PID").ok().as_deref(),
+        env::var("LISTEN_FDS").ok().as_deref(),
+    )
+}
+
+fn systemd_activation_fd_from_values(
+    current_pid: u32,
+    listen_pid: Option<&str>,
+    listen_fds: Option<&str>,
+) -> Result<Option<RawFd>> {
+    match (listen_pid, listen_fds) {
+        (None, None) => return Ok(None),
+        (Some(_), Some(_)) => {}
+        _ => anyhow::bail!("incomplete systemd socket activation environment"),
+    }
+
+    let listen_pid = listen_pid
+        .expect("checked above")
+        .parse::<u32>()
+        .context("parse LISTEN_PID")?;
+    if listen_pid != current_pid {
+        return Ok(None);
+    }
+
+    let listen_fds = listen_fds
+        .expect("checked above")
+        .parse::<RawFd>()
+        .context("parse LISTEN_FDS")?;
+    match listen_fds {
+        0 => Ok(None),
+        1 => Ok(Some(3)),
+        n => anyhow::bail!("expected exactly one systemd socket activation fd, got {n}"),
+    }
+}
+
+fn activated_stream_coredump_listener(fd: RawFd, socket_path: &Path) -> Result<UnixListener> {
+    anyhow::ensure!(fd >= 3, "systemd activation fd must be >= 3");
+    anyhow::ensure!(
+        socket_path.is_absolute(),
+        "coredump socket path must be absolute"
+    );
+
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    let fd = owned.as_raw_fd();
+    ensure_unix_stream_listener_fd(fd)?;
+    set_listener_fd_flags(fd)?;
+
+    let std_listener = unsafe { StdUnixListener::from_raw_fd(owned.into_raw_fd()) };
+    let local_addr = std_listener
+        .local_addr()
+        .context("query listener address")?;
+    anyhow::ensure!(
+        local_addr.as_pathname() == Some(socket_path),
+        "activated socket path {:?} does not match configured coredump socket path {}",
+        local_addr.as_pathname(),
+        socket_path.display()
+    );
+    UnixListener::from_std(std_listener).context("convert activated listener to tokio")
+}
+
+fn ensure_unix_stream_listener_fd(fd: RawFd) -> Result<()> {
+    let mut addr = std::mem::MaybeUninit::<libc::sockaddr_storage>::zeroed();
+    let mut addr_len = size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockname(
+            fd,
+            addr.as_mut_ptr().cast::<libc::sockaddr>(),
+            &mut addr_len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error()).context("getsockname");
+    }
+    let addr = unsafe { addr.assume_init() };
+    anyhow::ensure!(
+        addr.ss_family as libc::c_int == libc::AF_UNIX,
+        "activated fd is not a Unix socket"
+    );
+
+    let mut socket_type: libc::c_int = 0;
+    let mut len = size_of::<libc::c_int>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            &mut socket_type as *mut libc::c_int as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error()).context("getsockopt(SO_TYPE)");
+    }
+    anyhow::ensure!(
+        socket_type == libc::SOCK_STREAM,
+        "activated fd is not a Unix stream socket"
+    );
+
+    let mut accept_conn: libc::c_int = 0;
+    let mut len = size_of::<libc::c_int>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_ACCEPTCONN,
+            &mut accept_conn as *mut libc::c_int as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error()).context("getsockopt(SO_ACCEPTCONN)");
+    }
+    anyhow::ensure!(accept_conn != 0, "activated fd is not a listening socket");
+    Ok(())
+}
+
+fn set_listener_fd_flags(fd: RawFd) -> Result<()> {
+    let fd_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if fd_flags < 0 {
+        return Err(io::Error::last_os_error()).context("fcntl(F_GETFD)");
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, fd_flags | libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error()).context("fcntl(F_SETFD)");
+    }
+
+    let status_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if status_flags < 0 {
+        return Err(io::Error::last_os_error()).context("fcntl(F_GETFL)");
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, status_flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error()).context("fcntl(F_SETFL)");
+    }
+    Ok(())
 }
 
 fn peer_pidfd(fd: RawFd) -> Result<OwnedFd> {
@@ -478,6 +665,69 @@ mod tests {
     }
 
     #[test]
+    fn parses_systemd_socket_activation_environment() {
+        assert!(
+            systemd_activation_fd_from_values(42, None, None)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            systemd_activation_fd_from_values(42, Some("41"), Some("1"))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            systemd_activation_fd_from_values(42, Some("42"), Some("1")).unwrap(),
+            Some(3)
+        );
+        assert!(systemd_activation_fd_from_values(42, Some("42"), Some("2")).is_err());
+        assert!(systemd_activation_fd_from_values(42, Some("42"), None).is_err());
+    }
+
+    #[tokio::test]
+    async fn wraps_systemd_activation_listener_fd() {
+        let (dir, socket_path) = test_socket_path("activation-listener");
+        let std_listener = StdUnixListener::bind(&socket_path).unwrap();
+        let fd = std_listener.into_raw_fd();
+
+        let listener = activated_stream_coredump_listener(fd, &socket_path).unwrap();
+
+        assert_eq!(
+            listener.local_addr().unwrap().as_pathname(),
+            Some(socket_path.as_path())
+        );
+        drop(listener);
+        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejects_activated_listener_for_different_path() {
+        let (dir, socket_path) = test_socket_path("activation-listener-mismatch");
+        let expected_path = dir.join("expected.sock");
+        let std_listener = StdUnixListener::bind(&socket_path).unwrap();
+        let fd = std_listener.into_raw_fd();
+
+        let err = activated_stream_coredump_listener(fd, &expected_path).unwrap_err();
+
+        assert!(err.to_string().contains("does not match"));
+        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejects_activated_tcp_listener_fd() {
+        let (dir, socket_path) = test_socket_path("activation-tcp-listener");
+        let tcp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let fd = tcp_listener.into_raw_fd();
+
+        let err = activated_stream_coredump_listener(fd, &socket_path).unwrap_err();
+
+        assert!(err.to_string().contains("not a Unix socket"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn validates_coredump_protocol_request() {
         let req = CoredumpReq {
             size: COREDUMP_REQ_SIZE_VER0,
@@ -536,5 +786,19 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("exceeds kernel-supported mask"));
+    }
+
+    fn test_socket_path(name: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "coregate-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket_path = dir.join("coregate.sock");
+        (dir, socket_path)
     }
 }

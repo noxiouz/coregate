@@ -62,6 +62,10 @@ coregate serve-legacy --socket-address @/run/coregate-coredump.socket
 coregate serve --socket-address @@/run/coregate-coredump.socket
 ```
 
+Under systemd socket activation, these commands automatically use the single
+inherited listener fd instead of binding `/run/coregate-coredump.socket`
+themselves.
+
 Setup is also available and runs without starting the async server path:
 
 ```bash

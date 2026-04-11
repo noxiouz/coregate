@@ -49,6 +49,7 @@ Unit tests live next to Rust code. Scenario-based VM tests live in `crates/vmtes
   - `server-legacy`: `@/path.sock`, requires Linux `>= 6.16`
   - `server`: `@@/path.sock`, requires Linux `>= 6.19`
 - `@` and `@@` are different kernel protocols, not cosmetic aliases. Treat them as separate ingress implementations.
+- `serve` and `serve-legacy` support systemd socket activation. Keep it fd-based and read-only: use the single inherited listener, validate the path, and do not write sysctls from serve paths.
 - The hot path matters. Avoid adding expensive metadata enrichment before the core stream is drained.
 - Keep `crates/coregate/src/lib.rs` as module wiring and public re-exports only. Put third-party-style binary parsing in `bin/coregate.rs`, setup rendering in `setup`, socket protocols in `ingress`, and reusable collection flow in `runtime`.
 - `coregate` defaults to SQLite enabled and BPF disabled. Use `--no-default-features` on the library to drop SQLite, `--features bpf` on the library for BPF readout tests, and `--features coregate/bpf` when building the root binary.

@@ -133,6 +133,11 @@ should feed normalized requests into the runtime.
 | `serve-legacy` | implemented async adapter | `@/path.sock` |
 | `serve` | implemented async adapter | `@@/path.sock` |
 
+`serve` and `serve-legacy` also support systemd socket activation. When the
+activation environment contains exactly one listener fd for the current process,
+the ingress adapter consumes fd `3`, validates that it is a listening Unix
+stream socket at the configured path, and skips binding/unlinking the socket.
+
 ## Notes
 
 - Add new hot-path behavior behind a trait only when a downstream binary could

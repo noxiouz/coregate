@@ -71,6 +71,40 @@ same module runtime used by handle mode. They do not write sysctls; only
 `coregate setup ... --apply` writes `kernel.core_pattern` or
 `kernel.core_pipe_limit`.
 
+When run under systemd socket activation, `serve` and `serve-legacy`
+automatically use the single inherited listener fd from `LISTEN_PID` and
+`LISTEN_FDS` instead of binding the socket path themselves. The inherited
+socket path must match `--socket-address`.
+
+Example `coregate.socket`:
+
+```ini
+[Socket]
+ListenStream=/run/coregate-coredump.socket
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
+```
+
+Example Linux 6.19+ `coregate.service`:
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/coregate serve \
+    --socket-address @@/run/coregate-coredump.socket \
+    --config /etc/coregate/config.json
+```
+
+For legacy Linux 6.16+ socket mode, keep the same `.socket` unit and use:
+
+```ini
+[Service]
+ExecStart=/usr/local/bin/coregate serve-legacy \
+    --socket-address @/run/coregate-coredump.socket \
+    --config /etc/coregate/config.json
+```
+
 ## Library Composition
 
 `crates/coregate` exposes a builder so downstream binaries can assemble their
