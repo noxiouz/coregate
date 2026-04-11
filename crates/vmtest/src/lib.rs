@@ -1,4 +1,11 @@
+//! Host-side QEMU VM test harness.
+//!
+//! This crate owns the reusable VM machinery: image fetching, cloud-init
+//! generation, tool injection, QEMU startup, and the host side of the control
+//! channel. Named Coregate scenarios live in `vmtest-scenarios`.
+
 mod control;
+pub mod protocol;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
@@ -15,21 +22,13 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use tempfile::TempDir;
-use vmtest_protocol::{VmIngressMode, VmTestReply, VmTestRequest};
 
 use crate::control::{ControlChannel, ensure_parent};
+use crate::protocol::{VmIngressMode, VmTestReply, VmTestRequest};
 
 pub const DEFAULT_DEBIAN_SUITE: &str = "bookworm";
 pub const DEFAULT_DEBIAN_ARCH: &str = "amd64";
 pub const DEFAULT_GUEST_TARGET: &str = "x86_64-unknown-linux-musl";
-const SCENARIO_CORE_PATTERN_SEGV: &str = "core-pattern-segv";
-const SCENARIO_DELETED_EXE: &str = "deleted-exe";
-const SCENARIO_DUMPABLE_OFF: &str = "dumpable-off";
-const SCENARIO_STORAGE_REFUSED: &str = "storage-refused";
-const SCENARIO_THREAD_CRASH: &str = "thread-crash";
-const SCENARIO_SERVER_SEGV: &str = "server-segv";
-const SCENARIO_SERVER_LEGACY_SEGV: &str = "server-legacy-segv";
-const SCENARIO_ALL: &str = "all";
 
 #[derive(Debug, Clone)]
 pub struct CorePatternE2eOptions {
@@ -103,13 +102,11 @@ pub fn fetch_debian_image(output: Option<PathBuf>, suite: &str, arch: &str) -> R
     let sums_url = format!("{}/SHA512SUMS", debian_latest_dir(suite));
     let checksum_path = destination.with_extension("qcow2.SHA512SUMS");
 
-    run(
-        Command::new("curl")
-            .arg("-fL")
-            .arg("-o")
-            .arg(&destination)
-            .arg(&image_url),
-    )
+    run(Command::new("curl")
+        .arg("-fL")
+        .arg("-o")
+        .arg(&destination)
+        .arg(&image_url))
     .with_context(|| format!("download Debian image from {image_url}"))?;
 
     let sums_output = run(Command::new("curl").arg("-fL").arg(&sums_url))
@@ -122,33 +119,6 @@ pub fn fetch_debian_image(output: Option<PathBuf>, suite: &str, arch: &str) -> R
 
 pub fn default_debian_image_path() -> PathBuf {
     default_debian_image_path_for(DEFAULT_DEBIAN_SUITE, DEFAULT_DEBIAN_ARCH)
-}
-
-pub fn scenario_names() -> &'static [&'static str] {
-    &[
-        SCENARIO_CORE_PATTERN_SEGV,
-        SCENARIO_DELETED_EXE,
-        SCENARIO_DUMPABLE_OFF,
-        SCENARIO_STORAGE_REFUSED,
-        SCENARIO_THREAD_CRASH,
-        SCENARIO_SERVER_SEGV,
-        SCENARIO_SERVER_LEGACY_SEGV,
-        SCENARIO_ALL,
-    ]
-}
-
-pub fn scenario_test_filter(name: &str) -> Option<Option<&'static str>> {
-    match name {
-        SCENARIO_CORE_PATTERN_SEGV => Some(Some("core_pattern_e2e")),
-        SCENARIO_DELETED_EXE => Some(Some("deleted_exe_e2e")),
-        SCENARIO_DUMPABLE_OFF => Some(Some("dumpable_off_e2e")),
-        SCENARIO_STORAGE_REFUSED => Some(Some("storage_refused_e2e")),
-        SCENARIO_THREAD_CRASH => Some(Some("thread_crash_e2e")),
-        SCENARIO_SERVER_SEGV => Some(Some("server_segv_e2e")),
-        SCENARIO_SERVER_LEGACY_SEGV => Some(Some("server_legacy_segv_e2e")),
-        SCENARIO_ALL => Some(None),
-        _ => None,
-    }
 }
 
 pub fn options_from_env() -> Result<Option<CorePatternE2eOptions>> {
@@ -181,117 +151,6 @@ pub fn run_scenario_from_env(scenario: &VmScenario<'_>) -> Result<Option<CorePat
         return Ok(None);
     };
     run_scenario(opts, scenario).map(Some)
-}
-
-pub fn core_pattern_segv_scenario() -> VmScenario<'static> {
-    VmScenario {
-        name: "core_pattern_segv",
-        ingress_mode: VmIngressMode::Handle,
-        guest_setup: None,
-        trigger_command: "ulimit -c unlimited; /usr/local/bin/victim-crash segv",
-        config_override: None,
-        expect_record: true,
-        expect_core: true,
-        expect_sqlite: true,
-        expect_rate_limit_allowed: Some(true),
-        requires_explicit_kernel: false,
-    }
-}
-
-pub fn dumpable_off_scenario() -> VmScenario<'static> {
-    VmScenario {
-        name: "dumpable_off",
-        ingress_mode: VmIngressMode::Handle,
-        guest_setup: None,
-        trigger_command: "ulimit -c unlimited; /usr/local/bin/victim-crash dumpable-off-segv",
-        config_override: None,
-        expect_record: false,
-        expect_core: false,
-        expect_sqlite: false,
-        expect_rate_limit_allowed: None,
-        requires_explicit_kernel: false,
-    }
-}
-
-pub fn deleted_exe_scenario() -> VmScenario<'static> {
-    VmScenario {
-        name: "deleted_exe",
-        ingress_mode: VmIngressMode::Handle,
-        guest_setup: None,
-        trigger_command: "ulimit -c unlimited; /usr/local/bin/victim-crash self-delete-segv",
-        config_override: None,
-        expect_record: true,
-        expect_core: true,
-        expect_sqlite: true,
-        expect_rate_limit_allowed: Some(true),
-        requires_explicit_kernel: false,
-    }
-}
-
-pub fn storage_refused_scenario() -> VmScenario<'static> {
-    VmScenario {
-        name: "storage_refused",
-        ingress_mode: VmIngressMode::Handle,
-        guest_setup: None,
-        trigger_command: "ulimit -c unlimited; /usr/local/bin/victim-crash segv",
-        config_override: Some(json!({
-            "default": {
-                "core": {
-                    "min_free_percent": 100
-                }
-            }
-        })),
-        expect_record: true,
-        expect_core: false,
-        expect_sqlite: true,
-        expect_rate_limit_allowed: Some(false),
-        requires_explicit_kernel: false,
-    }
-}
-
-pub fn thread_crash_scenario() -> VmScenario<'static> {
-    VmScenario {
-        name: "thread_crash",
-        ingress_mode: VmIngressMode::Handle,
-        guest_setup: None,
-        trigger_command: "ulimit -c unlimited; /usr/local/bin/victim-crash thread-segv",
-        config_override: None,
-        expect_record: true,
-        expect_core: true,
-        expect_sqlite: true,
-        expect_rate_limit_allowed: Some(true),
-        requires_explicit_kernel: false,
-    }
-}
-
-pub fn server_segv_scenario() -> VmScenario<'static> {
-    VmScenario {
-        name: "server_segv",
-        ingress_mode: VmIngressMode::Server,
-        guest_setup: None,
-        trigger_command: "ulimit -c unlimited; /usr/local/bin/victim-crash segv",
-        config_override: None,
-        expect_record: true,
-        expect_core: true,
-        expect_sqlite: true,
-        expect_rate_limit_allowed: Some(true),
-        requires_explicit_kernel: true,
-    }
-}
-
-pub fn server_legacy_segv_scenario() -> VmScenario<'static> {
-    VmScenario {
-        name: "server_legacy_segv",
-        ingress_mode: VmIngressMode::ServerLegacy,
-        guest_setup: None,
-        trigger_command: "ulimit -c unlimited; /usr/local/bin/victim-crash segv",
-        config_override: None,
-        expect_record: true,
-        expect_core: true,
-        expect_sqlite: true,
-        expect_rate_limit_allowed: Some(true),
-        requires_explicit_kernel: true,
-    }
 }
 
 /// Options for running an arbitrary test binary inside a VM.
@@ -371,8 +230,16 @@ pub fn run_test(opts: RunTestOptions) -> Result<i32> {
 }
 
 pub fn run_guest_command(opts: GuestCommandOptions) -> Result<GuestCommandResult> {
-    ensure!(opts.image.exists(), "image not found: {}", opts.image.display());
-    ensure!(opts.agent.exists(), "agent binary not found: {}", opts.agent.display());
+    ensure!(
+        opts.image.exists(),
+        "image not found: {}",
+        opts.image.display()
+    );
+    ensure!(
+        opts.agent.exists(),
+        "agent binary not found: {}",
+        opts.agent.display()
+    );
     ensure!(
         opts.kernel.is_some() == opts.initrd.is_some(),
         "kernel and initrd must either both be set or both be unset"
@@ -419,21 +286,23 @@ pub fn run_guest_command(opts: GuestCommandOptions) -> Result<GuestCommandResult
         })?;
 
         // Optionally run guest setup commands first.
-        if let Some(setup) = &opts.guest_setup {
-            if !setup.is_empty() {
-                let reply = control.request(&VmTestRequest::RunCommand {
-                    command: setup.clone(),
-                    timeout_secs: Some(60),
-                })?;
-                match reply {
-                    VmTestReply::CommandResult { exit_code, stderr, .. } => {
-                        if exit_code != 0 {
-                            bail!("guest setup command failed (exit {exit_code}): {stderr}");
-                        }
+        if let Some(setup) = &opts.guest_setup
+            && !setup.is_empty()
+        {
+            let reply = control.request(&VmTestRequest::RunCommand {
+                command: setup.clone(),
+                timeout_secs: Some(60),
+            })?;
+            match reply {
+                VmTestReply::CommandResult {
+                    exit_code, stderr, ..
+                } => {
+                    if exit_code != 0 {
+                        bail!("guest setup command failed (exit {exit_code}): {stderr}");
                     }
-                    VmTestReply::Error { message } => bail!("guest setup error: {message}"),
-                    _ => bail!("unexpected reply to setup command"),
                 }
+                VmTestReply::Error { message } => bail!("guest setup error: {message}"),
+                _ => bail!("unexpected reply to setup command"),
             }
         }
 
@@ -443,9 +312,15 @@ pub fn run_guest_command(opts: GuestCommandOptions) -> Result<GuestCommandResult
         })?;
 
         match reply {
-            VmTestReply::CommandResult { exit_code, stdout, stderr } => {
-                Ok(GuestCommandResult { exit_code, stdout, stderr })
-            }
+            VmTestReply::CommandResult {
+                exit_code,
+                stdout,
+                stderr,
+            } => Ok(GuestCommandResult {
+                exit_code,
+                stdout,
+                stderr,
+            }),
             VmTestReply::Error { message } => bail!("guest agent error: {message}"),
             _ => bail!("unexpected reply to run-test command"),
         }
@@ -454,18 +329,24 @@ pub fn run_guest_command(opts: GuestCommandOptions) -> Result<GuestCommandResult
     shutdown_qemu(&mut qemu);
     drop(serial_log);
     if result.is_err() && keep_workdir {
-        eprintln!("[vmtest run-test] preserved workdir at {}", tempdir_path.display());
+        eprintln!(
+            "[vmtest run-test] preserved workdir at {}",
+            tempdir_path.display()
+        );
         let _ = tempdir.keep();
     }
     result
 }
 
-pub fn run_core_pattern_e2e(opts: CorePatternE2eOptions) -> Result<CorePatternE2eResult> {
-    run_scenario(opts, &core_pattern_segv_scenario())
-}
-
-pub fn run_scenario(opts: CorePatternE2eOptions, scenario: &VmScenario<'_>) -> Result<CorePatternE2eResult> {
-    ensure!(opts.image.exists(), "image not found: {}", opts.image.display());
+pub fn run_scenario(
+    opts: CorePatternE2eOptions,
+    scenario: &VmScenario<'_>,
+) -> Result<CorePatternE2eResult> {
+    ensure!(
+        opts.image.exists(),
+        "image not found: {}",
+        opts.image.display()
+    );
     ensure!(
         !scenario.requires_explicit_kernel || opts.kernel.is_some(),
         "scenario '{}' requires an explicit 6.16+ guest kernel; set COREGATE_VM_KERNEL and COREGATE_VM_INITRD",
@@ -482,12 +363,27 @@ pub fn run_scenario(opts: CorePatternE2eOptions, scenario: &VmScenario<'_>) -> R
         ensure!(initrd.exists(), "initrd not found: {}", initrd.display());
     }
 
-    let collector = opts.collector.clone().unwrap_or_else(default_collector_path);
+    let collector = opts
+        .collector
+        .clone()
+        .unwrap_or_else(default_collector_path);
     let victim = opts.victim.clone().unwrap_or_else(default_victim_path);
     let agent = opts.agent.clone().unwrap_or_else(default_agent_path);
-    ensure!(collector.exists(), "collector binary not found: {}", collector.display());
-    ensure!(victim.exists(), "victim binary not found: {}", victim.display());
-    ensure!(agent.exists(), "vmtest-agent binary not found: {}", agent.display());
+    ensure!(
+        collector.exists(),
+        "collector binary not found: {}",
+        collector.display()
+    );
+    ensure!(
+        victim.exists(),
+        "victim binary not found: {}",
+        victim.display()
+    );
+    ensure!(
+        agent.exists(),
+        "vmtest-agent binary not found: {}",
+        agent.display()
+    );
 
     let keep_workdir = env::var_os("COREGATE_VM_KEEP_WORKDIR").is_some();
     let tempdir = tempdir_in(opts.workdir.as_deref())?;
@@ -506,15 +402,13 @@ pub fn run_scenario(opts: CorePatternE2eOptions, scenario: &VmScenario<'_>) -> R
         let mut control = ControlChannel::connect(&mut qemu, &paths.control_socket, || {
             format_qemu_stderr_tail(&paths.qemu_stderr)
         })?;
-        let reply = control.request(
-            &VmTestRequest::RunScenario {
-                scenario_name: scenario.name.to_string(),
-                ingress_mode: scenario.ingress_mode,
-                guest_setup: scenario.guest_setup.map(str::to_string),
-                trigger_command: scenario.trigger_command.to_string(),
-                expect_record: scenario.expect_record,
-            },
-        )?;
+        let reply = control.request(&VmTestRequest::RunScenario {
+            scenario_name: scenario.name.to_string(),
+            ingress_mode: scenario.ingress_mode,
+            guest_setup: scenario.guest_setup.map(str::to_string),
+            trigger_command: scenario.trigger_command.to_string(),
+            expect_record: scenario.expect_record,
+        })?;
 
         let (record, core_files, sqlite_present, records_jsonl) = match reply {
             VmTestReply::ScenarioResult {
@@ -525,7 +419,9 @@ pub fn run_scenario(opts: CorePatternE2eOptions, scenario: &VmScenario<'_>) -> R
             } => (record, core_files, sqlite_present, records_jsonl),
             VmTestReply::Error { message } => bail!("guest agent returned error: {message}"),
             VmTestReply::Pong => bail!("unexpected pong reply for scenario run"),
-            VmTestReply::CommandResult { .. } => bail!("unexpected command_result reply for scenario run"),
+            VmTestReply::CommandResult { .. } => {
+                bail!("unexpected command_result reply for scenario run")
+            }
         };
 
         fs::create_dir_all(&paths.artifacts_dir).context("create artifacts dir")?;
@@ -640,10 +536,19 @@ fn default_debian_image_path_for(suite: &str, arch: &str) -> PathBuf {
 }
 
 fn debian_image_url(suite: &str, arch: &str) -> String {
-    format!("{}/{}", debian_latest_dir(suite), debian_image_filename(suite, arch))
+    format!(
+        "{}/{}",
+        debian_latest_dir(suite),
+        debian_image_filename(suite, arch)
+    )
 }
 
-fn verify_debian_checksum(image_path: &Path, sums_path: &Path, suite: &str, arch: &str) -> Result<()> {
+fn verify_debian_checksum(
+    image_path: &Path,
+    sums_path: &Path,
+    suite: &str,
+    arch: &str,
+) -> Result<()> {
     let filename = debian_image_filename(suite, arch);
     let sums = fs::read_to_string(sums_path).context("read SHA512SUMS")?;
     let expected = sums
@@ -665,7 +570,11 @@ fn verify_debian_checksum(image_path: &Path, sums_path: &Path, suite: &str, arch
         .map(str::to_string)
         .context("missing sha512 value")?;
 
-    ensure!(actual == expected, "checksum mismatch for {}", image_path.display());
+    ensure!(
+        actual == expected,
+        "checksum mismatch for {}",
+        image_path.display()
+    );
     Ok(())
 }
 
@@ -729,8 +638,11 @@ fn merge_json(base: &mut Value, overlay: &Value) {
 }
 
 fn write_run_test_cloud_init(paths: &HarnessPaths) -> Result<()> {
-    fs::write(&paths.meta_data, "instance-id: coregate-vmtest\nlocal-hostname: coregate\n")
-        .context("write meta-data")?;
+    fs::write(
+        &paths.meta_data,
+        "instance-id: coregate-vmtest\nlocal-hostname: coregate\n",
+    )
+    .context("write meta-data")?;
 
     let user_data = r#"#cloud-config
 runcmd:
@@ -748,22 +660,33 @@ fn create_run_test_tools_image(
     agent: &Path,
     extra_files: &[PathBuf],
 ) -> Result<()> {
-    run(Command::new("truncate").arg("-s").arg("128M").arg(&paths.tools_image))
-        .context("create tools image file")?;
+    run(Command::new("truncate")
+        .arg("-s")
+        .arg("128M")
+        .arg(&paths.tools_image))
+    .context("create tools image file")?;
     run(Command::new("mkfs.vfat").arg(&paths.tools_image)).context("mkfs.vfat tools image")?;
-    run(Command::new("fatlabel").arg(&paths.tools_image).arg("COROTOOLS"))
-        .context("label tools image")?;
+    run(Command::new("fatlabel")
+        .arg(&paths.tools_image)
+        .arg("COROTOOLS"))
+    .context("label tools image")?;
     mcopy_into_image(&paths.tools_image, agent, "vmtest-agent")?;
     for extra in extra_files {
-        let name = extra.file_name().context("extra file has no filename")?.to_string_lossy();
+        let name = extra
+            .file_name()
+            .context("extra file has no filename")?
+            .to_string_lossy();
         mcopy_into_image(&paths.tools_image, extra, &name)?;
     }
     Ok(())
 }
 
 fn write_cloud_init(paths: &HarnessPaths) -> Result<()> {
-    fs::write(&paths.meta_data, "instance-id: coregate-vmtest\nlocal-hostname: coregate\n")
-        .context("write meta-data")?;
+    fs::write(
+        &paths.meta_data,
+        "instance-id: coregate-vmtest\nlocal-hostname: coregate\n",
+    )
+    .context("write meta-data")?;
 
     let user_data = r#"#cloud-config
 runcmd:
@@ -784,53 +707,79 @@ runcmd:
 }
 
 fn create_seed_image(paths: &HarnessPaths) -> Result<()> {
-    run(Command::new("truncate").arg("-s").arg("32M").arg(&paths.seed_image))
-        .context("create seed image file")?;
+    run(Command::new("truncate")
+        .arg("-s")
+        .arg("32M")
+        .arg(&paths.seed_image))
+    .context("create seed image file")?;
     run(Command::new("mkfs.vfat").arg(&paths.seed_image)).context("mkfs.vfat seed image")?;
-    run(Command::new("fatlabel").arg(&paths.seed_image).arg("CIDATA"))
-        .context("label seed image")?;
+    run(Command::new("fatlabel")
+        .arg(&paths.seed_image)
+        .arg("CIDATA"))
+    .context("label seed image")?;
     mcopy_into_image(&paths.seed_image, &paths.meta_data, "meta-data")?;
     mcopy_into_image(&paths.seed_image, &paths.user_data, "user-data")?;
     Ok(())
 }
 
-fn create_tools_image(paths: &HarnessPaths, collector: &Path, victim: &Path, agent: &Path) -> Result<()> {
-    run(Command::new("truncate").arg("-s").arg("128M").arg(&paths.tools_image))
-        .context("create tools image file")?;
+fn create_tools_image(
+    paths: &HarnessPaths,
+    collector: &Path,
+    victim: &Path,
+    agent: &Path,
+) -> Result<()> {
+    run(Command::new("truncate")
+        .arg("-s")
+        .arg("128M")
+        .arg(&paths.tools_image))
+    .context("create tools image file")?;
     run(Command::new("mkfs.vfat").arg(&paths.tools_image)).context("mkfs.vfat tools image")?;
-    run(Command::new("fatlabel").arg(&paths.tools_image).arg("COROTOOLS"))
-        .context("label tools image")?;
+    run(Command::new("fatlabel")
+        .arg(&paths.tools_image)
+        .arg("COROTOOLS"))
+    .context("label tools image")?;
     mcopy_into_image(&paths.tools_image, collector, "coregate")?;
     mcopy_into_image(&paths.tools_image, victim, "victim-crash")?;
     mcopy_into_image(&paths.tools_image, agent, "vmtest-agent")?;
-    mcopy_into_image(&paths.tools_image, &paths.guest_config, "coregate-config.json")?;
+    mcopy_into_image(
+        &paths.tools_image,
+        &paths.guest_config,
+        "coregate-config.json",
+    )?;
     Ok(())
 }
 
 fn mcopy_into_image(image: &Path, local: &Path, remote_name: &str) -> Result<()> {
-    run(
-        Command::new("mcopy")
-            .arg("-oi")
-            .arg(image)
-            .arg(local)
-            .arg(format!("::{remote_name}")),
-    )
-    .with_context(|| format!("copy {} into {} as {remote_name}", local.display(), image.display()))?;
+    run(Command::new("mcopy")
+        .arg("-oi")
+        .arg(image)
+        .arg(local)
+        .arg(format!("::{remote_name}")))
+    .with_context(|| {
+        format!(
+            "copy {} into {} as {remote_name}",
+            local.display(),
+            image.display()
+        )
+    })?;
     Ok(())
 }
 
 fn create_overlay_image(base: &Path, overlay: &Path) -> Result<()> {
-    run(
-        Command::new("qemu-img")
-            .arg("create")
-            .arg("-f")
-            .arg("qcow2")
-            .arg("-F")
-            .arg("qcow2")
-            .arg("-b")
-            .arg(base)
-            .arg(overlay),
-    )
+    // qemu-img resolves relative backing paths from the overlay location, not
+    // the caller's cwd. Bazel passes runfile-relative paths, so make it stable.
+    let base = base
+        .canonicalize()
+        .with_context(|| format!("resolve backing image {}", base.display()))?;
+    run(Command::new("qemu-img")
+        .arg("create")
+        .arg("-f")
+        .arg("qcow2")
+        .arg("-F")
+        .arg("qcow2")
+        .arg("-b")
+        .arg(base)
+        .arg(overlay))
     .context("create overlay image")?;
     Ok(())
 }
@@ -854,11 +803,20 @@ fn spawn_qemu(opts: &CorePatternE2eOptions, paths: &HarnessPaths) -> Result<Chil
         .arg("-serial")
         .arg(format!("file:{}", paths.serial_log.display()))
         .arg("-drive")
-        .arg(format!("if=virtio,format=qcow2,file={}", paths.overlay_image.display()))
+        .arg(format!(
+            "if=virtio,format=qcow2,file={}",
+            paths.overlay_image.display()
+        ))
         .arg("-drive")
-        .arg(format!("if=virtio,format=raw,file={},readonly=on", paths.seed_image.display()))
+        .arg(format!(
+            "if=virtio,format=raw,file={},readonly=on",
+            paths.seed_image.display()
+        ))
         .arg("-drive")
-        .arg(format!("if=virtio,format=raw,file={},readonly=on", paths.tools_image.display()))
+        .arg(format!(
+            "if=virtio,format=raw,file={},readonly=on",
+            paths.tools_image.display()
+        ))
         .arg("-device")
         .arg("virtio-serial-pci")
         .arg("-chardev")
@@ -893,7 +851,9 @@ fn kernel_append(extra: Option<&str>) -> String {
 }
 
 fn run(cmd: &mut Command) -> Result<Output> {
-    let output = cmd.output().with_context(|| format!("spawn command: {cmd:?}"))?;
+    let output = cmd
+        .output()
+        .with_context(|| format!("spawn command: {cmd:?}"))?;
     if output.status.success() {
         Ok(output)
     } else {
@@ -947,34 +907,34 @@ impl SerialLogFollower {
             let mut pending = String::new();
 
             while !stop_thread.load(Ordering::Relaxed) {
-                if let Ok(mut file) = fs::File::open(&path) {
-                    if file.seek(SeekFrom::Start(offset)).is_ok() {
-                        let mut buf = Vec::new();
-                        if file.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                            offset += buf.len() as u64;
-                            let chunk = String::from_utf8_lossy(&buf);
-                            pending.push_str(&chunk);
-                            while let Some(pos) = pending.find('\n') {
-                                let line = pending.drain(..=pos).collect::<String>();
-                                eprintln!(
-                                    "[vmtest {scenario}] {}",
-                                    line.trim_end(),
-                                    scenario = scenario_name
-                                );
-                            }
+                if let Ok(mut file) = fs::File::open(&path)
+                    && file.seek(SeekFrom::Start(offset)).is_ok()
+                {
+                    let mut buf = Vec::new();
+                    if file.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                        offset += buf.len() as u64;
+                        let chunk = String::from_utf8_lossy(&buf);
+                        pending.push_str(&chunk);
+                        while let Some(pos) = pending.find('\n') {
+                            let line = pending.drain(..=pos).collect::<String>();
+                            eprintln!(
+                                "[vmtest {scenario}] {}",
+                                line.trim_end(),
+                                scenario = scenario_name
+                            );
                         }
                     }
                 }
                 thread::sleep(Duration::from_millis(250));
             }
 
-            if let Ok(mut file) = fs::File::open(&path) {
-                if file.seek(SeekFrom::Start(offset)).is_ok() {
-                    let mut buf = Vec::new();
-                    if file.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                        let chunk = String::from_utf8_lossy(&buf);
-                        pending.push_str(&chunk);
-                    }
+            if let Ok(mut file) = fs::File::open(&path)
+                && file.seek(SeekFrom::Start(offset)).is_ok()
+            {
+                let mut buf = Vec::new();
+                if file.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                    let chunk = String::from_utf8_lossy(&buf);
+                    pending.push_str(&chunk);
                 }
             }
             if !pending.trim().is_empty() {
@@ -1004,7 +964,10 @@ fn env_path(key: &str) -> Option<PathBuf> {
     env::var_os(key).map(PathBuf::from)
 }
 
-fn assert_scenario_expectations(result: &CorePatternE2eResult, scenario: &VmScenario<'_>) -> Result<()> {
+fn assert_scenario_expectations(
+    result: &CorePatternE2eResult,
+    scenario: &VmScenario<'_>,
+) -> Result<()> {
     if scenario.expect_record {
         ensure!(
             result.record.is_some(),

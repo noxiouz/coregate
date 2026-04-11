@@ -5,13 +5,11 @@ rust_library(
     name = "vmtest-lib",
     srcs = glob(
         ["src/**/*.rs"],
-        exclude = ["src/main.rs"],
+        exclude = ["src/main.rs", "src/bin/**"],
     ),
     crate_name = "vmtest",
     aliases = aliases(),
-    deps = all_crate_deps(normal = True) + [
-        "//crates/vmtest-protocol",
-    ],
+    deps = all_crate_deps(normal = True),
     proc_macro_deps = all_crate_deps(proc_macro = True),
     visibility = ["//visibility:public"],
 )
@@ -22,8 +20,27 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         ":vmtest-lib",
-        "//crates/vmtest-protocol",
     ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "vmtest-agent",
+    srcs = ["src/bin/vmtest-agent.rs"],
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":vmtest-lib",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "victim-crash",
+    srcs = ["src/bin/victim-crash.rs"],
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True),
     proc_macro_deps = all_crate_deps(proc_macro = True),
     visibility = ["//visibility:public"],
 )

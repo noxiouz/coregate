@@ -19,11 +19,18 @@ Bazel is used for hermetic builds, VM-based integration tests, and CI.
 bazel build //...
 
 # Build the main binary
-bazel build //crates/cli:coregate
+bazel build //crates/coregate:coregate
 
-# Build for musl (static binary)
-bazel build --config=musl //crates/cli:coregate
+# Build the guest/static variant used by VM tests
+bazel build --config=musl //crates/coregate:coregate_guest
 ```
+
+The Bazel `coregate` target enables the default SQLite metadata path and keeps
+collector-side BPF readout disabled. Build the separate `coregate-bpf` target
+when you need the BPF loader.
+
+The `coregate_guest` target disables SQLite for now. That keeps the VM guest
+binary fully static without needing a musl C toolchain for bundled SQLite.
 
 ## Project structure
 
@@ -47,7 +54,7 @@ External Rust dependencies are resolved by `crate_universe` from the Cargo works
 crate.from_cargo(
     name = "crates",
     cargo_lockfile = "//:Cargo.lock",
-    manifests = ["//:Cargo.toml", "//crates/cli:Cargo.toml", ...],
+    manifests = ["//:Cargo.toml"],
 )
 ```
 
@@ -59,28 +66,32 @@ CARGO_BAZEL_REPIN=1 bazel sync --only=crates
 
 ## Cross-compilation
 
-The musl config produces fully static `x86_64-unknown-linux-musl` binaries:
+The musl config produces fully static `x86_64-unknown-linux-musl` Rust
+binaries when the target does not need host-built C objects:
 
 ```bash
-bazel build --config=musl //crates/cli:coregate
+bazel build --config=musl //crates/coregate:coregate_guest
+bazel build --config=musl //crates/vmtest:vmtest-agent
 ```
 
-This is configured via an extra target triple in `MODULE.bazel` and a
-platform definition in the root `BUILD.bazel`.
+This is configured via a repository-local `musl` platform constraint, a
+rules_rust musl repository set in `MODULE.bazel`, and `.bazelrc`'s
+`--config=musl` extra toolchain.
+
+Bazel VM tests apply this guest platform automatically to guest-side labels.
+The host-side `vmtest` runner stays in exec configuration.
 
 ## Crate targets
 
 | Crate | Target | Type |
 |-------|--------|------|
-| `crates/cli` | `//crates/cli:coregate` | binary |
-| `crates/corefile` | `//crates/corefile` | library |
-| `crates/kernel` | `//crates/kernel` | library |
-| `crates/limit` | `//crates/limit` | library |
-| `crates/meta` | `//crates/meta` | library |
-| `crates/store` | `//crates/store` | library |
-| `crates/telemetry` | `//crates/telemetry` | library |
-| `crates/vmtest` | `//crates/vmtest:vmtest` | binary + library |
-| `crates/vmtest-agent` | `//crates/vmtest-agent:vmtest-agent` | binary |
-| `crates/vmtest-protocol` | `//crates/vmtest-protocol` | library |
-| `crates/victim-crash` | `//crates/victim-crash` | binary (test fixture) |
+| `crates/coregate` | `//crates/coregate:coregate` | binary + library |
+| `crates/coregate` | `//crates/coregate:coregate_guest` | no-SQLite VM guest binary |
+| `crates/bpf-stack` | `//crates/bpf-stack:coregate-bpf-stack` | library |
+| `crates/bpf-loader` | `//crates/bpf-loader:coregate-bpf` | binary |
+| `crates/symbolizer-proto` | `//crates/symbolizer-proto` | library |
+| `crates/vmtest` | `//crates/vmtest:vmtest` | harness binary + library |
+| `crates/vmtest` | `//crates/vmtest:vmtest-agent` | guest agent binary |
+| `crates/vmtest` | `//crates/vmtest:victim-crash` | guest crash fixture binary |
+| `crates/vmtest-scenarios` | `//crates/vmtest-scenarios:scenarios_main` | VM scenario tests |
 | `crates/xtask` | `//crates/xtask` | binary |

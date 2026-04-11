@@ -20,7 +20,7 @@ class DeletedExeTest(unittest.TestCase):
 
     def test_record_produced(self):
         record = _last_record()
-        self.assertEqual(record.get("schema_version"), 1)
+        self.assertEqual(record.get("schema_version"), 3)
 
     def test_binary_removed_flag(self):
         record = _last_record()

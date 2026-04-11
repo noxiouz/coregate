@@ -19,7 +19,7 @@ vm_rust_test / vm_python_test / vm_sh_test   (convenience macros)
         v
     _vm_test rule
         |
-        +-- Builds inner test (rust_test / py_test / sh_test)
+        +-- Builds or wraps an inner test for the guest
         +-- Generates runner script that invokes vmtest CLI:
         |     1. Creates FAT tools image with test binary + agent + data files
         |     2. Creates cloud-init seed + overlay qcow2
@@ -66,17 +66,16 @@ vm_python_test(
     vm_host = "//tests/vm:debian12",
     guest_setup = "apt-get install -y some-package",
     data = [
-        "//crates/cli:coregate",
+        "//tests/vm:coregate_guest",
         "config.json",
     ],
     timeout_secs = 300,
 )
 ```
 
-The `py_test` is built with `rules_python`'s hermetic toolchain, producing a
-self-contained executable. This executable (bundled interpreter + deps) is
-copied into the VM and executed there. Python deps from Bazel are available
-inside the guest.
+`vm_python_test` is intentionally source-only today. The macro copies the
+Python source into the guest and runs it with `/usr/bin/python3`. Bazel Python
+`deps` are rejected until the VM harness copies Python runfiles into the guest.
 
 ### Rust test
 
@@ -87,7 +86,7 @@ vm_rust_test(
     name = "my_rust_test",
     srcs = ["test_something.rs"],
     vm_host = "//tests/vm:debian12",
-    deps = ["//crates/corefile"],
+    deps = ["//crates/coregate:coregate_lib"],
 )
 ```
 
@@ -192,8 +191,8 @@ vm_python_test(
     srcs = ["test_core.py"],
     vm_host = ":debian12",
     data = [
-        "//crates/cli:coregate",
-        "//crates/victim-crash",
+        "//tests/vm:coregate_guest",
+        "//crates/vmtest:victim-crash",
         "coregate-config.json",
     ],
     guest_setup = " && ".join([
@@ -214,6 +213,11 @@ The `guest_setup` string is written to a shell script file at build time
 
 Files listed in `data` are copied into the VM's `/usr/local/bin/` directory.
 This includes binaries, config files, and any other artifacts the test needs.
+
+Guest-side Rust labels in `test`, `data`, and the implicit `vmtest-agent` are
+transitioned to `//:linux_x86_64_musl` so they run on Debian without depending
+on the host glibc version. The host-side `vmtest` runner remains in exec
+configuration.
 
 ## How it works internally
 

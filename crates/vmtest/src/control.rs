@@ -16,7 +16,11 @@ pub struct ControlChannel {
 }
 
 impl ControlChannel {
-    pub fn connect(qemu: &mut Child, socket_path: &Path, serial_stderr_tail: impl Fn() -> String) -> Result<Self> {
+    pub fn connect(
+        qemu: &mut Child,
+        socket_path: &Path,
+        serial_stderr_tail: impl Fn() -> String,
+    ) -> Result<Self> {
         let deadline = Instant::now() + CONTROL_WAIT_TIMEOUT;
         loop {
             if let Some(status) = qemu
@@ -61,7 +65,9 @@ impl ControlChannel {
         stream
             .write_all(&payload)
             .context("write control request payload")?;
-        stream.write_all(b"\n").context("write control request newline")?;
+        stream
+            .write_all(b"\n")
+            .context("write control request newline")?;
         stream.flush().context("flush control request")?;
 
         let line = self.read_line()?;

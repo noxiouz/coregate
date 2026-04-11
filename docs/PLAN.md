@@ -1,101 +1,121 @@
 # Coregate Plan And Progress
 
-Last updated: 2026-04-09
+Last updated: 2026-04-11
 
 ## Status
 
 ### Completed
 
 - `core_pattern` collector MVP in Rust
-- positional CLI arguments suitable for `core_pattern`
-- local metadata extraction from `/proc` and ELF files
-- local JSONL sink
-- local SQLite sink behind a default-enabled feature
-- local persistent rate limiting
+- positional CLI arguments suitable for kernel `core_pattern`
+- reusable `coregate` library runtime with a type-state `RuntimeBuilder`
+- reusable `coregate-cli` crate that owns the standard CLI/kernel argument contract
+- root `bin/coregate.rs` binary that only supplies the default runtime builder
+- async-capable module trait surface for storage, config, limiter, and enrichment
+- async `serve` and `serve-legacy` socket ingress adapters wired into the root binary
+- local metadata extraction from `/proc` and ELF data
+- local JSONL sink and default-enabled SQLite sink
 - compressed core storage (`zstd`, `xz`) and sparse uncompressed writes
+- minimum-free-space protection for core storage
 - fail-closed `PR_DUMPABLE` handling
+- local persistent rate limiting
 - hot-path refactor so expensive enrichment happens after core draining
-- first BPF stack tracer capture path:
+- BPF stack tracer capture path:
   - `kprobe/do_coredump`
   - `bpf_get_stack(..., BPF_F_USER_STACK)`
   - pinned LRU map under `/sys/fs/bpf/coregate`
-  - optional best-effort stack enrichment in `coregate`
-  - `blazesym` live process symbolization plus remote-friendly normalization
   - standalone `coregate-bpf` loader
-- QEMU-based Debian VM harness
-- guest control plane over virtio-serial with a guest `vmtest-agent`
+  - optional `coregate` readout behind the `bpf` feature
+  - `blazesym` live symbolization, debuginfod support, and remote-friendly normalization
+- QEMU-based Debian VM harness with virtio-serial guest control
 - musl guest binaries for VM tests to avoid host/guest glibc mismatch
+- scenario-driven Rust integration tests in `vmtest-scenarios`
 - `xtask` wrapper for fetching images, building guest tools, listing scenarios, and running VM tests
-- end-to-end VM scenarios:
-  - `core-pattern-segv`
-  - `deleted-exe`
-  - `dumpable-off`
+- Bazel build targets for the main binary, BPF crates, VM harness, and VM scenario tests
 
 ### In Progress
 
-- building out scenario coverage in the VM harness
-- shaping the VM harness so it can later be moved into a reusable repo and wrapped by Bazel
-- validating BPF capture across kernels and preparing later symbolization
+- expanding VM scenario coverage for edge cases and newer kernel protocols
+- expanding VM scenario coverage for edge cases and newer kernel protocols
+- keeping the VM harness isolated enough to move into a reusable repo later
+- validating BPF capture and symbolization behavior across kernel versions
 
 ### Not Started
 
-- socket mode ingress for kernel 6.16+
 - distributed rate limiting
-- GDB-based stack extraction
-- BPF symbolization and richer stack/debug data
 - CPU register extraction from core notes or helper metadata
 - ClickHouse sink
 - plugin crate/runtime reintroduction once there is an actual extension surface
-- Bazel VM test integration
 - VM image build pipeline beyond cloud-image usage
 
 ## Goals
 
-- Collect Linux coredumps in two modes:
-  - `core_pattern` handler mode
-  - socket mode (kernel >= 6.16)
+- Collect Linux coredumps in classic pipe-helper mode and socket modes.
 - Keep the fast path optimized to minimize crash-process retention.
 - Support extensible metadata extraction, stack tracing, rate limiting, storage, and telemetry.
-- Keep test coverage kernel-aware so the same userspace can be exercised with kernels before and after 6.16.
+- Keep test coverage kernel-aware so the same userspace can be exercised with different kernels.
 
 ## Current Architecture
 
 ### Workspace
 
-- `collector-kernel`: ingress abstractions (`PatternPipe`, future `SocketMode`)
-- `collector-meta`: metadata extraction
-- `collector-core`: sparse/compressed core writer
-- `collector-store`: JSON local + feature-gated SQLite/ClickHouse sinks
-- `collector-limit`: local/distributed limiters
-- `collector-telemetry`: stage timings
-- `coregate`: executable wiring everything together
-- `victim-crash`: crash fixture binary for guest tests
-- `vmtest-protocol`: host/guest test protocol
-- `vmtest-agent`: guest-side test driver
-- `vmtest`: host-side QEMU harness and scenario library
-- `xtask`: developer wrapper around the VM flow
+- root package `coregate-bin`: shipped `bin/coregate.rs` binary. It composes
+  the library runtime like a downstream consumer would.
+- `crates/coregate-cli`: reusable CLI front-end. It owns command parsing,
+  `handle` positional argument order, setup dispatch, and async server command
+  dispatch. Binaries pass in a runtime builder callable.
+- `crates/coregate`: reusable collector library. Collector internals are Rust modules under `src/`:
+  - `modules`: public extension traits
+  - `runtime`: type-state builder and handle-mode runtime
+  - `defaults`: built-in module implementations
+  - `setup`: `core_pattern` rendering and kernel-version checks
+  - `ingress`: `serve`/`serve-legacy` socket protocols
+  - `dump`: compatibility shim for older internal callers
+  - `kernel`: kernel request types
+  - `meta`: metadata extraction
+  - `corefile`: sparse/compressed core writer
+  - `store`: JSONL sink and feature-gated SQLite sink
+  - `limit`: local limiters
+  - `telemetry`: stage timings
+  - `bpf`: feature-scoped BPF stack readout and symbolization
+- `crates/bpf-loader`: `coregate-bpf` loader for pinned BPF objects
+- `crates/bpf-stack`: BPF map/object helpers and stack record shape
+- `crates/symbolizer-proto`: shared protobuf schema for symbolizer requests
+- `crates/vmtest`: reusable QEMU harness, host/guest protocol, guest agent, and crash fixture binaries
+- `crates/vmtest-scenarios`: named Coregate VM scenarios and integration tests
+- `crates/xtask`: developer wrapper around the VM flow
 
-### Collector Flow
+### Feature Boundaries
 
-Current `handle` CLI shape:
+- `coregate` default features enable SQLite metadata.
+- Build without SQLite with `cargo build -p coregate --no-default-features`.
+- BPF readout is opt-in with `cargo build -p coregate --features bpf`.
+- `libbpf-sys` is not linked by the default `coregate` build; it is isolated in the BPF crates.
+- SQLite cfgs are scoped inside `store`, so call sites use one sink helper instead of repeated feature gates.
+- BPF cfgs are scoped inside `bpf`, so call sites do not depend on `libbpf` types unless the feature is enabled.
+
+## Collector Flow
+
+Current root binary CLI shape:
 
 ```text
 coregate handle <pid> <tid> <tid_initial> <signal> <epoch> <dumpable> <exe> <config>
+coregate setup handle
+coregate setup server
+coregate setup server-legacy
+coregate serve --socket-address @@/run/coregate-coredump.socket
+coregate serve-legacy --socket-address @/run/coregate-coredump.socket
 ```
 
-Current `core_pattern` example:
+Canonical `core_pattern` example:
 
 ```text
 |/usr/local/bin/coregate handle %P %i %I %s %t %d %E /etc/coregate/config.json
 ```
 
-Current setup helper:
-
-```text
-coregate setup handle
-coregate setup server-legacy --socket-address @/run/coregate-coredump.socket
-coregate setup server --socket-address @@/run/coregate-coredump.socket
-```
+Setup is synchronous because it only renders or writes sysctls. Socket modes are
+async ingress adapters: `serve-legacy` uses `@/path.sock` on Linux `>= 6.16`;
+`serve` uses `@@/path.sock` on Linux `>= 6.19`.
 
 Current collection flow:
 
@@ -106,47 +126,15 @@ Current collection flow:
 5. Evaluate local rate limits.
 6. Drain stdin and store the core.
 7. Enrich metadata after the core is drained.
-8. Write JSONL metadata.
-9. Optionally write SQLite metadata when built with the `sqlite` feature.
+8. Optionally read BPF stack data when built with the `bpf` feature.
+9. Write JSONL metadata.
+10. Optionally write SQLite metadata when built with the `sqlite` feature.
 
-## Delivered Features
+The runtime handle entry point is async and consumes a `tokio::io::AsyncRead`
+core stream. Built-in modules return boxed futures so custom stores, remote
+limiters, config sources, and symbolizers can perform real async I/O.
 
-### Metadata
-
-- pid, tid, namespace pid
-- thread name
-- binary name and path
-- build ID
-- uptime
-- cgroup path
-- deleted-executable detection
-- dumpable state
-- package version via `dpkg-query` or `rpm` when enabled
-
-### Core Storage
-
-- uncompressed writes
-- `zstd` compression
-- `xz` compression
-- sparse file support for uncompressed writes
-
-### BPF Stack Tracer
-
-- separate loader binary: `coregate-bpf`
-- pinned BPF objects under `/sys/fs/bpf/coregate`
-- fixed stack record shape: `count + 32 user addresses`
-- LRU hash map keyed by global pid/tgid
-- best-effort map read in the collector fast path
-- `blazesym` user-space symbolization and normalized file-offset metadata
-- debug inspection commands:
-  - `coregate debug-bpf-stack <pid>`
-  - `coregate debug-bpf-stats`
-- host validation on Linux `6.6.87.2-microsoft-standard-WSL2`:
-  - `do_coredump` kprobe fired
-  - `bpf_get_stack` captured 8 frames
-  - `coregate` read the pinned stack entry successfully
-
-### VM Test Harness
+## VM Test Harness
 
 - Debian 12 `generic` qcow2 image fetch helper
 - temporary cloud-init seed image
@@ -154,80 +142,51 @@ Current collection flow:
 - qcow2 overlay creation from a base image
 - QEMU boot with optional external kernel/initrd/append overrides
 - guest control via virtio-serial and `vmtest-agent`
-- musl guest binaries built for `x86_64-unknown-linux-musl`
-- scenario-driven Rust integration tests and `xtask` wrapper
+- guest binaries built for `x86_64-unknown-linux-musl`
+- named scenarios in `crates/vmtest-scenarios/tests/scenarios/`
+- Bazel VM macros under `bzl/vm_test.bzl`
+- Bazel VM macros transition guest-side `test`, `data`, and `vmtest-agent`
+  targets to `//:linux_x86_64_musl`; the host-side VM runner stays in exec
+  config
+- Bazel Python VM tests are source-only and run via guest `/usr/bin/python3`
+- Bazel handle-mode VM tests use a no-SQLite `coregate_guest` build until a
+  musl C toolchain is wired for bundled SQLite
 
 ## Roadmap
 
-### Phase 1: Solidify `core_pattern` path
-
-Status: mostly complete
-
-Remaining work:
-
-- add more VM scenarios:
-  - `thread-crash`
-  - `rate-limited`
-  - possibly package lookup scenarios on Debian/Fedora
-- improve host-side progress and artifact reporting as needed
-- decide whether JSON config is enough short-term or whether protobuf parsing should be added early
-
-### Phase 2: Add richer metadata and stack extraction
+### Phase 1: Strengthen Kernel Coverage
 
 Status: in progress
 
-- GDB stack provider
-- CPU register extraction from core notes
-- BPF symbolization in user space
-- evaluate how stack/provider outputs should land in JSON and SQLite
+- add more VM scenarios for edge cases such as rate limiting and package lookup
+- expand socket-mode scenario coverage against 6.16+ and 6.19+ kernels
+- improve artifact reporting from failed VM runs
 
-### Phase 3: Add socket mode and kernel-version coverage
+### Phase 2: Add Richer Crash Metadata
 
-Status: not started
+Status: in progress
 
-- socket mode ingress for kernel 6.16+
-- early allow/deny decision for socket mode
-- test matrix for:
-  - pre-6.16 kernels with `core_pattern`
-  - 6.16+ kernels with socket mode
+- CPU register extraction from core notes or helper metadata
+- container identity heuristics when cgroup data is available
+- package lookup scenarios on Debian and RPM-based images
 
-### Phase 4: Add advanced integrations
+### Phase 3: Add Advanced Integrations
 
 Status: not started
 
 - distributed rate limiting (`Redis` or `Memcache`)
-- BPF stack provider plus symbolization (`blazesym` or equivalent)
 - ClickHouse sink
-- runtime plugin model
-- Bazel wrapper around the existing VM runner
+- runtime plugin model after the extension surface is clear
+- repeatable VM image build pipeline
 
-## BPF Stack Tracer Plan
+## Debuginfod Symbolization
 
-Status: first capture path complete
-
-- Hook around `do_coredump`
-- Capture frame addresses into a pinned map keyed by global pid/tgid
-- Collector reads frames from the pinned map
-- Symbolize later in user space
-- Fallback to GDB provider
-
-## Debuginfod Symbolization Plan
-
-Status: implementation starting
-
-- Do not build a Coregate-specific symbol indexer.
-- Use debuginfod as the artifact distribution/indexing layer.
-- Keep Coregate-specific value in:
-  - BPF stack capture
-  - process/module normalization
-  - crash-record integration
-  - optional batch frame symbolization
+- Coregate uses debuginfod as the artifact distribution/indexing layer.
+- Coregate-specific value stays in BPF stack capture, process/module normalization, crash-record integration, and optional batch frame symbolization.
 - Symbolization flow:
   - normalize BPF frame addresses to file offsets
   - map each frame to a module build-id
   - fetch debuginfo via `GET /buildid/<build-id>/debuginfo`
   - cache the downloaded debuginfo locally
   - symbolize with `blazesym` over the downloaded artifact
-- Server discovery:
-  - use `DEBUGINFOD_URLS` as the debuginfod server list
-  - keep paths as diagnostics only, not lookup keys
+- Server discovery uses `DEBUGINFOD_URLS` as the debuginfod server list.

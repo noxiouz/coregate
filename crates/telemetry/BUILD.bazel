@@ -1,8 +1,0 @@
-load("@rules_rust//rust:defs.bzl", "rust_library")
-
-rust_library(
-    name = "collector-telemetry",
-    srcs = glob(["src/**/*.rs"]),
-    crate_name = "collector_telemetry",
-    visibility = ["//visibility:public"],
-)

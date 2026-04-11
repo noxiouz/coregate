@@ -17,7 +17,7 @@
 $ sudo coregate-bpf install --force
 $ sudo coregate serve --apply-sysctl
 
-$ sudo coregate -- debug-bpf-stats --json
+$ sudo coregate debug-bpf-stats --json  # bpf-enabled build
 
 coregate v0.1.0
 [collector] stored file:///var/lib/coregate/cores/20260409T...
@@ -88,9 +88,9 @@ coregate setup server</code></pre>
     <div class="step-card">
       <span class="step-num">3</span>
       <h3>Optionally enable BPF stacks</h3>
-      <p>Install the pinned tracer if you want crash records to include captured user frames and symbolization metadata.</p>
+      <p>Install the pinned tracer and use a <code>coregate</code> build with the <code>bpf</code> feature if you want crash records to include captured user frames and symbolization metadata.</p>
       <pre><code>sudo coregate-bpf install --force
-sudo coregate -- debug-bpf-stats --json</code></pre>
+sudo coregate debug-bpf-stats --json  # bpf-enabled build</code></pre>
     </div>
   </section>
 
@@ -134,7 +134,7 @@ cargo build -p coregate
 cargo build -p coregate-bpf
 
 # Or Bazel
-bazel build //crates/cli:coregate</code></pre>
+bazel build //crates/coregate:coregate</code></pre>
       <div class="hero-actions">
         <a class="button button-primary" href="{{ "/docs/quickstart/" | relURL }}">Get Started</a>
         <a class="button button-secondary" href="{{ .Site.Params.repo }}">GitHub</a>

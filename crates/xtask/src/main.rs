@@ -4,10 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, ExitStatus};
 use vmtest::{
-    DEFAULT_DEBIAN_ARCH, DEFAULT_DEBIAN_SUITE, DEFAULT_GUEST_TARGET, default_debian_image_path,
-    GuestCommandOptions, default_guest_binary_path, fetch_debian_image, run_guest_command,
-    scenario_names, scenario_test_filter,
+    DEFAULT_DEBIAN_ARCH, DEFAULT_DEBIAN_SUITE, DEFAULT_GUEST_TARGET, GuestCommandOptions,
+    default_debian_image_path, default_guest_binary_path, fetch_debian_image, run_guest_command,
 };
+use vmtest_scenarios::{scenario_names, scenario_test_filter};
 
 #[derive(Debug, Parser)]
 #[command(name = "xtask")]
@@ -169,7 +169,7 @@ fn run_vmtest(args: RunVmtestArgs) -> Result<()> {
     build_guest_tools()?;
 
     let mut cmd = Command::new("cargo");
-    cmd.arg("test").arg("-p").arg("vmtest");
+    cmd.arg("test").arg("-p").arg("vmtest-scenarios");
     if let Some(test_filter) = test_filter {
         cmd.arg(test_filter);
     }
@@ -224,9 +224,8 @@ fn build_guest_tools() -> Result<()> {
         .arg("-p")
         .arg("coregate")
         .arg("-p")
-        .arg("victim-crash")
-        .arg("-p")
-        .arg("vmtest-agent")
+        .arg("vmtest")
+        .arg("--bins")
         .env("CC_x86_64_unknown_linux_musl", "musl-gcc")
         .status()
         .context("build guest binaries for musl target")?;
@@ -259,8 +258,7 @@ fn prepare_kernel(args: PrepareKernelArgs) -> Result<()> {
             .expect("workspace root")
             .join(args.output_dir)
     };
-    fs::create_dir_all(&output_dir)
-        .with_context(|| format!("create {}", output_dir.display()))?;
+    fs::create_dir_all(&output_dir).with_context(|| format!("create {}", output_dir.display()))?;
 
     let modules_pkg = format!(
         "linux-modules-{}_{}_amd64.deb",
@@ -321,6 +319,9 @@ echo "__COREGATE_INITRD_END__"
 
     let result = run_guest_command(GuestCommandOptions {
         image,
+        kernel: None,
+        initrd: None,
+        append: None,
         agent,
         memory_mib: args.memory_mib,
         cpus: args.cpus,
@@ -339,10 +340,18 @@ echo "__COREGATE_INITRD_END__"
         );
     }
 
-    let kernel_b64 = extract_section(&result.stdout, "__COREGATE_KERNEL_BEGIN__", "__COREGATE_KERNEL_END__")
-        .context("extract kernel payload")?;
-    let initrd_b64 = extract_section(&result.stdout, "__COREGATE_INITRD_BEGIN__", "__COREGATE_INITRD_END__")
-        .context("extract initrd payload")?;
+    let kernel_b64 = extract_section(
+        &result.stdout,
+        "__COREGATE_KERNEL_BEGIN__",
+        "__COREGATE_KERNEL_END__",
+    )
+    .context("extract kernel payload")?;
+    let initrd_b64 = extract_section(
+        &result.stdout,
+        "__COREGATE_INITRD_BEGIN__",
+        "__COREGATE_INITRD_END__",
+    )
+    .context("extract initrd payload")?;
 
     decode_base64_to_file(
         kernel_b64,
@@ -355,17 +364,25 @@ echo "__COREGATE_INITRD_END__"
 
     println!(
         "kernel={}\ninitrd={}",
-        output_dir.join(format!("vmlinuz-{}", args.kernel_release)).display(),
-        output_dir.join(format!("initrd.img-{}", args.kernel_release)).display()
+        output_dir
+            .join(format!("vmlinuz-{}", args.kernel_release))
+            .display(),
+        output_dir
+            .join(format!("initrd.img-{}", args.kernel_release))
+            .display()
     );
     Ok(())
 }
 
 fn extract_section<'a>(text: &'a str, begin: &str, end: &str) -> Result<&'a str> {
-    let start = text.find(begin).with_context(|| format!("missing marker {begin}"))?;
+    let start = text
+        .find(begin)
+        .with_context(|| format!("missing marker {begin}"))?;
     let after_start = &text[start + begin.len()..];
     let after_start = after_start.strip_prefix('\n').unwrap_or(after_start);
-    let end_idx = after_start.find(end).with_context(|| format!("missing marker {end}"))?;
+    let end_idx = after_start
+        .find(end)
+        .with_context(|| format!("missing marker {end}"))?;
     Ok(after_start[..end_idx].trim())
 }
 

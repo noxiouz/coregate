@@ -7,6 +7,13 @@ load(":defs.bzl", "HANDLE_DATA", "VM_TAGS", "handle_guest_setup")
 # VM host targets
 # ---------------------------------------------------------------------------
 
+genrule(
+    name = "coregate_guest",
+    srcs = ["//crates/coregate:coregate_guest"],
+    outs = ["coregate"],
+    cmd = "cp $< $@",
+)
+
 # Extract kernel + initrd from the Debian cloud image.
 # Requires libguestfs-tools: sudo apt-get install libguestfs-tools
 vm_kernel_from_image(
@@ -76,8 +83,8 @@ vm_python_test(
     srcs = ["test_storage_refused.py"],
     vm_host = ":debian12",
     data = [
-        "//crates/cli:coregate",
-        "//crates/victim-crash",
+        ":coregate_guest",
+        "//crates/vmtest:victim-crash",
         "coregate-config-storage-refused.json",
     ],
     guest_setup = handle_guest_setup(

@@ -267,63 +267,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "collector-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "serde",
- "xz2",
- "zstd",
-]
-
-[[package]]
-name = "collector-kernel"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "collector-limit"
-version = "0.1.0"
-dependencies = [
- "fs2",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "collector-meta"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "libc",
- "object",
- "serde",
-]
-
-[[package]]
-name = "collector-store"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collector-core",
- "collector-limit",
- "collector-meta",
- "coregate-bpf-stack",
- "fs2",
- "rusqlite",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "collector-telemetry"
-version = "0.1.0"
-
-[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -359,20 +302,28 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "collector-core",
- "collector-kernel",
- "collector-limit",
- "collector-meta",
- "collector-store",
- "collector-telemetry",
  "coregate-bpf-stack",
- "coregate-symbolizer-proto",
+ "fs2",
  "libc",
+ "object",
  "prost",
  "prost-build",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
+ "tokio",
+ "xz2",
+ "zstd",
+]
+
+[[package]]
+name = "coregate-bin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "coregate",
+ "coregate-cli",
 ]
 
 [[package]]
@@ -397,6 +348,16 @@ dependencies = [
  "libbpf-rs",
  "serde",
  "tempfile",
+]
+
+[[package]]
+name = "coregate-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "coregate",
+ "tokio",
 ]
 
 [[package]]
@@ -1993,13 +1954,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "victim-crash"
-version = "0.1.0"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "vmtest"
 version = "0.1.0"
 dependencies = [
@@ -2009,25 +1963,14 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "vmtest-protocol",
 ]
 
 [[package]]
-name = "vmtest-agent"
+name = "vmtest-scenarios"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "libc",
  "serde_json",
- "vmtest-protocol",
-]
-
-[[package]]
-name = "vmtest-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
+ "vmtest",
 ]
 
 [[package]]
@@ -2404,6 +2347,7 @@ dependencies = [
  "anyhow",
  "clap",
  "vmtest",
+ "vmtest-scenarios",
 ]
 
 [[package]]

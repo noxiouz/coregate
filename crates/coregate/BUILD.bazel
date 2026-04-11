@@ -1,0 +1,62 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+
+cargo_build_script(
+    name = "build_script",
+    srcs = ["build.rs"],
+    build_script_env = {},
+    data = ["proto/config.proto"],
+    deps = all_crate_deps(build = True),
+)
+
+rust_library(
+    name = "coregate_lib",
+    srcs = glob(["src/**/*.rs"], exclude = ["src/bin/**"]),
+    crate_name = "coregate",
+    crate_features = ["sqlite"],
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":build_script",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_library(
+    name = "coregate_lib_guest",
+    srcs = glob(["src/**/*.rs"], exclude = ["src/bin/**"]),
+    crate_name = "coregate",
+    aliases = aliases(),
+    deps = crate_deps([
+        "anyhow",
+        "chrono",
+        "clap",
+        "fs2",
+        "libc",
+        "object",
+        "prost",
+        "serde",
+        "serde_json",
+        "xz2",
+        "zstd",
+    ]) + [
+        ":build_script",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "coregate",
+    srcs = ["src/bin/coregate.rs"],
+    deps = [":coregate_lib"],
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "coregate_guest",
+    srcs = ["src/bin/coregate.rs"],
+    deps = [":coregate_lib_guest"],
+    visibility = ["//visibility:public"],
+)

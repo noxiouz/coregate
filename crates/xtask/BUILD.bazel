@@ -7,6 +7,7 @@ rust_binary(
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
         "//crates/vmtest:vmtest-lib",
+        "//crates/vmtest-scenarios:vmtest-scenarios",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
     visibility = ["//visibility:public"],

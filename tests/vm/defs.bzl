@@ -8,8 +8,8 @@ VM_TAGS = [
 
 # Common data deps for handle-mode scenarios.
 HANDLE_DATA = [
-    "//crates/cli:coregate",
-    "//crates/victim-crash",
+    "//tests/vm:coregate_guest",
+    "//crates/vmtest:victim-crash",
     "coregate-config.json",
 ]
 

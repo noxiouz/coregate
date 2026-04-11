@@ -20,10 +20,37 @@ Usage:
     )
 """
 
-load("@rules_python//python:py_test.bzl", "py_test")
 load("@rules_rust//rust:defs.bzl", "rust_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load(":providers.bzl", "VMHostInfo")
+
+_GUEST_PLATFORM = "//:linux_x86_64_musl"
+_GUEST_RUST_TOOLCHAIN = "@rust_toolchains//:rust_linux_x86_64__x86_64-unknown-linux-musl__stable"
+
+def _transitioned_target(value):
+    if type(value) == "list":
+        if len(value) != 1:
+            fail("expected a single transitioned target, got {}".format(len(value)))
+        return value[0]
+    return value
+
+def _guest_platform_transition_impl(settings, attr):
+    extra_toolchains = list(settings["//command_line_option:extra_toolchains"])
+    if _GUEST_RUST_TOOLCHAIN not in extra_toolchains:
+        extra_toolchains.append(_GUEST_RUST_TOOLCHAIN)
+    return {
+        "//command_line_option:extra_toolchains": extra_toolchains,
+        "//command_line_option:platforms": [_GUEST_PLATFORM],
+    }
+
+_guest_platform_transition = transition(
+    implementation = _guest_platform_transition_impl,
+    inputs = ["//command_line_option:extra_toolchains"],
+    outputs = [
+        "//command_line_option:extra_toolchains",
+        "//command_line_option:platforms",
+    ],
+)
 
 # ---------------------------------------------------------------------------
 # _vm_test rule: the core — runs any executable inside the VM
@@ -36,7 +63,8 @@ def _vm_test_impl(ctx):
     agent_bin = ctx.executable._vmtest_agent
 
     data_files = []
-    for d in ctx.attr.data:
+    for raw_dep in ctx.attr.data:
+        d = _transitioned_target(raw_dep)
         data_files.extend(d.files.to_list())
 
     # Write guest_setup to a file to avoid shell quoting issues.
@@ -98,8 +126,8 @@ def _vm_test_impl(ctx):
 
     runfiles = ctx.runfiles(files = all_runfiles_files)
     runfiles = runfiles.merge(ctx.attr._vm_runner[DefaultInfo].default_runfiles)
-    runfiles = runfiles.merge(ctx.attr._vmtest_agent[DefaultInfo].default_runfiles)
-    runfiles = runfiles.merge(ctx.attr.test[DefaultInfo].default_runfiles)
+    runfiles = runfiles.merge(_transitioned_target(ctx.attr._vmtest_agent)[DefaultInfo].default_runfiles)
+    runfiles = runfiles.merge(_transitioned_target(ctx.attr.test)[DefaultInfo].default_runfiles)
 
     return [DefaultInfo(
         executable = script,
@@ -113,7 +141,7 @@ _vm_test = rule(
     attrs = {
         "test": attr.label(
             executable = True,
-            cfg = "exec",
+            cfg = _guest_platform_transition,
             mandatory = True,
             doc = "Test executable to run inside the VM.",
         ),
@@ -125,6 +153,7 @@ _vm_test = rule(
         ),
         "data": attr.label_list(
             allow_files = True,
+            cfg = _guest_platform_transition,
             doc = "Additional files to copy into the VM.",
         ),
         "_vm_runner": attr.label(
@@ -133,9 +162,12 @@ _vm_test = rule(
             cfg = "exec",
         ),
         "_vmtest_agent": attr.label(
-            default = "//crates/vmtest-agent:vmtest-agent",
+            default = "//crates/vmtest:vmtest-agent",
             executable = True,
-            cfg = "exec",
+            cfg = _guest_platform_transition,
+        ),
+        "_allowlist_function_transition": attr.label(
+            default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
     },
 )
@@ -184,11 +216,7 @@ def vm_rust_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [],
     )
 
 def vm_python_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [], **kwargs):
-    """Builds a py_test, then runs it inside a QEMU VM.
-
-    The py_test is built with rules_python's hermetic toolchain, producing a
-    self-contained executable. This executable (with bundled interpreter and
-    deps) is copied into the VM and executed there.
+    """Runs a Python source file inside a QEMU VM using guest /usr/bin/python3.
 
     Args:
         name: Target name.
@@ -196,16 +224,32 @@ def vm_python_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [
         timeout_secs: Total allowed execution time.
         guest_setup: Shell commands to run in guest before the test.
         data: Additional files to copy into the VM.
-        **kwargs: Passed to py_test (srcs, deps, main, etc.).
+        **kwargs: Source-only test args. deps are intentionally unsupported
+            until vmtest copies Bazel runfiles into the guest.
     """
     inner_name = name + "_vm_inner"
     inner_tags = _merge_manual_tag(kwargs)
-    if "main" not in kwargs and "srcs" in kwargs and len(kwargs["srcs"]) > 0:
-        kwargs["main"] = kwargs["srcs"][0]
-    py_test(
+
+    srcs = kwargs.pop("srcs", [])
+    if not srcs:
+        fail("vm_python_test requires at least one source file")
+    main = kwargs.pop("main", srcs[0])
+    deps = kwargs.pop("deps", [])
+    if deps:
+        fail("vm_python_test does not support deps yet; use source-only tests")
+
+    # Keep kwargs narrow so the generated launcher remains a plain guest script.
+    if kwargs:
+        fail("unsupported vm_python_test kwargs: {}".format(sorted(kwargs.keys())))
+
+    native.genrule(
         name = inner_name,
+        outs = [inner_name + ".sh"],
+        cmd = "cat > $@ <<'EOF'\n#!/usr/bin/env sh\nset -eu\nexec /usr/bin/python3 /usr/local/bin/{main}\nEOF\nchmod +x $@".format(
+            main = main.rsplit("/", 1)[-1],
+        ),
+        executable = True,
         tags = inner_tags,
-        **kwargs
     )
     _vm_test(
         name = name,
@@ -213,7 +257,7 @@ def vm_python_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [
         vm_host = vm_host,
         timeout_secs = timeout_secs,
         guest_setup = guest_setup,
-        data = data,
+        data = data + srcs,
     )
 
 def vm_sh_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [], **kwargs):

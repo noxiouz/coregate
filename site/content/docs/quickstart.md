@@ -1,59 +1,31 @@
 ---
 title: Quickstart
 weight: 10
-summary: Build Coregate, configure kernel delivery, and optionally enable the BPF stack tracer.
+summary: Build Coregate, run handle mode, and optionally enable the BPF stack tracer.
 ---
 
 ## Build
 
 ```bash
-# Cargo
-cargo build -p coregate
+cargo build --bin coregate
+cargo build -p coregate-bin --bin coregate --features coregate/bpf
 cargo build -p coregate-bpf
-
-# Or Bazel (manages Rust toolchain automatically)
-bazel build //crates/cli:coregate
 ```
 
-See [Bazel Build](/docs/bazel/) for the full Bazel workflow.
+`coregate` is assembled from the root `bin/coregate.rs` binary. The reusable
+collector implementation lives in `crates/coregate`; the standard CLI contract
+lives in `crates/coregate-cli`.
 
-## Configure `core_pattern` handle mode
+## Configure `core_pattern` Handle Mode
 
-Dry run:
-
-```bash
-cargo run -p coregate -- setup handle
-```
-
-Apply:
-
-```bash
-sudo cargo run -p coregate -- setup handle --apply
-```
-
-This installs the canonical kernel invocation:
+The current shipped binary exposes handle mode:
 
 ```text
-|/path/to/coregate handle %P %i %I %s %t %d %E /etc/coregate/config.json
+|/usr/local/bin/coregate handle %P %i %I %s %t %d %E /etc/coregate/config.json
 ```
 
-## Configure socket modes
-
-Legacy socket mode (`@`, Linux 6.16+):
-
-```bash
-cargo run -p coregate -- setup server-legacy
-sudo cargo run -p coregate -- setup server-legacy --apply
-```
-
-Protocol socket mode (`@@`, Linux 6.19+):
-
-```bash
-cargo run -p coregate -- setup server
-sudo cargo run -p coregate -- serve --apply-sysctl
-```
-
-`coregate setup` checks the running kernel version and rejects unsupported socket modes. For protocol socket mode, `serve --apply-sysctl` is the long-running server command that also installs the dynamic `@@...` pattern.
+That pattern keeps arguments positional so it fits the kernel `core_pattern`
+length limit.
 
 ## Config
 
@@ -63,20 +35,37 @@ Start from the example:
 cp docs/config.example.json /etc/coregate/config.json
 ```
 
-## Optional: enable BPF stack capture
+## Optional: Enable BPF Stack Capture
 
 ```bash
 sudo cargo run -p coregate-bpf -- install --force
-sudo cargo run -p coregate -- debug-bpf-stats --json
+cargo build -p coregate-bin --bin coregate --features coregate/bpf
 ```
 
-This pins the tracer under `/sys/fs/bpf/coregate` and lets `coregate` enrich crash records with raw user addresses, best-effort live symbols, and normalized file-offset metadata for later symbolization.
+This pins the tracer under `/sys/fs/bpf/coregate` and uses a `coregate` build
+with the `coregate/bpf` dependency feature to enrich crash records with raw user
+addresses, best-effort live symbols, and normalized file-offset metadata for
+later symbolization.
 
-## Local run
+## Local Run
 
 ```bash
 coregate --help
 coregate handle --help
 coregate setup --help
-coregate debug-bpf-stack --help
+```
+
+Socket server modes are available from the same binary:
+
+```bash
+coregate serve-legacy --socket-address @/run/coregate-coredump.socket
+coregate serve --socket-address @@/run/coregate-coredump.socket
+```
+
+Setup is also available and runs without starting the async server path:
+
+```bash
+coregate setup handle
+coregate setup server-legacy
+coregate setup server
 ```

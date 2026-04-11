@@ -1,0 +1,26 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "vmtest-scenarios",
+    srcs = ["src/lib.rs"],
+    crate_name = "vmtest_scenarios",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        "//crates/vmtest:vmtest-lib",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    visibility = ["//visibility:public"],
+)
+
+rust_test(
+    name = "scenarios_main",
+    srcs = glob(["tests/**/*.rs"]),
+    crate_root = "tests/scenarios_main.rs",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":vmtest-scenarios",
+        "//crates/vmtest:vmtest-lib",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+)

@@ -29,7 +29,7 @@ class CorePatternSegvTest(unittest.TestCase):
         self.assertGreater(len(lines), 0, "records.jsonl should not be empty")
 
         record = json.loads(lines[-1])
-        self.assertEqual(record.get("schema_version"), 1)
+        self.assertEqual(record.get("schema_version"), 3)
 
     def test_metadata_fields(self):
         """Key metadata fields should be populated."""

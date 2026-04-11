@@ -2,48 +2,108 @@
 
 ## Build
 
+Build the shipped binary:
+
+```bash
+cargo build --bin coregate
+cargo build -p coregate-bin --bin coregate
+```
+
+Build the reusable library crate only:
+
 ```bash
 cargo build -p coregate
 cargo build -p coregate --no-default-features
-cargo build -p coregate-bpf
+cargo build -p coregate --features bpf
+```
+
+Default `coregate` library builds include SQLite metadata support and exclude
+collector-side BPF readout. Build the binary with the dependency feature when
+you need BPF stack enrichment:
+
+```bash
+cargo build -p coregate-bin --bin coregate --features coregate/bpf
 ```
 
 ## Handle Mode
+
+The standard CLI exposes the handle-mode collector. It expects the positional
+arguments used by Linux `core_pattern` and reads the core stream from `stdin`.
 
 ```bash
 coregate handle 1234 1234 1234 11 1710000000 1 /usr/bin/my-app ./docs/config.example.json < corefile.bin
 ```
 
-Canonical `core_pattern` used by `coregate setup handle`:
+Canonical `core_pattern` shape:
 
 ```text
 |/usr/local/bin/coregate handle %P %i %I %s %t %d %E /etc/coregate/config.json
 ```
 
-## Kernel Setup
-
-Dry run:
+Render or apply the handle-mode setup:
 
 ```bash
-cargo run -p coregate -- setup handle
-cargo run -p coregate -- setup server-legacy
-cargo run -p coregate -- setup server
+coregate setup handle
+sudo coregate setup handle --apply
 ```
 
-Apply:
+## Server Modes
+
+Legacy socket mode (`@`, Linux 6.16+):
 
 ```bash
-sudo cargo run -p coregate -- setup handle --apply
-sudo cargo run -p coregate -- setup server-legacy --apply
+coregate setup server-legacy
+sudo coregate setup server-legacy --apply
+coregate serve-legacy --socket-address @/run/coregate-coredump.socket
 ```
 
-Notes:
+Protocol socket mode (`@@`, Linux 6.19+):
 
-- config path default: `/etc/coregate/config.json`
-- legacy socket default: `@/run/coregate-coredump.socket`
-- protocol socket default: `@@/run/coregate-coredump.socket`
-- `setup server-legacy` requires Linux `>= 6.16`
-- `setup server` requires Linux `>= 6.19`
+```bash
+coregate setup server
+sudo coregate setup server --apply
+coregate serve --socket-address @@/run/coregate-coredump.socket
+```
+
+Both server modes are async ingress adapters. They parse the kernel socket
+protocol, derive a normalized crash request, and pass the socket stream into the
+same module runtime used by handle mode. They do not write sysctls; only
+`coregate setup ... --apply` writes `kernel.core_pattern` or
+`kernel.core_pipe_limit`.
+
+## Library Composition
+
+`crates/coregate` exposes a builder so downstream binaries can assemble their
+own collector from default or custom modules. The runtime handler is async and
+accepts a `tokio::io::AsyncRead` core stream.
+
+```rust
+let runtime = coregate::Runtime::builder()
+    .with_config(FileConfigSource::new("/etc/coregate/config.json"))
+    .with_meta(ProcfsMeta::new())
+    .with_store(LocalStore::new())
+    .with_limiter(PolicyLimiter::new())
+    .with_enrichers(default_enrichers())
+    .build()?;
+
+runtime.handle(request, &mut core_stream).await?;
+```
+
+`crates/coregate-cli` provides the standard Coregate CLI contract. It keeps the
+`handle` positional argument order aligned with `coregate setup`, while still
+letting the binary choose the runtime modules:
+
+```rust
+fn main() {
+    coregate_cli::run(build_runtime).unwrap();
+}
+```
+
+A downstream binary that needs a different command-line contract can skip
+`coregate-cli` and call `crates/coregate` APIs directly.
+
+See [docs/MODULE_SYSTEM.md](MODULE_SYSTEM.md) for module traits and extension
+points.
 
 ## BPF Stack Tracer
 
@@ -51,8 +111,8 @@ How it works:
 
 - a separate `coregate-bpf` utility attaches `kprobe/do_coredump`
 - the BPF program stores up to 32 user return addresses in a pinned LRU map keyed by global pid/tgid
-- `coregate` reads and deletes that entry during crash handling
-- user space then adds best-effort `blazesym` symbols plus normalized file offsets for later remote symbolization
+- `coregate` reads and deletes that entry during crash handling when the library is built with `coregate/bpf`
+- user space adds best-effort `blazesym` symbols plus normalized file offsets for later symbolization
 
 Install the pinned tracer objects:
 
@@ -66,13 +126,6 @@ Replace existing pinned objects:
 sudo cargo run -p coregate-bpf -- install --force
 ```
 
-Inspect tracer state:
-
-```bash
-sudo cargo run -p coregate -- debug-bpf-stats --json
-sudo cargo run -p coregate -- debug-bpf-stack <pid> --json
-```
-
 Remove the pinned tracer objects:
 
 ```bash
@@ -82,59 +135,23 @@ sudo cargo run -p coregate-bpf -- remove
 Notes:
 
 - BPF objects are pinned under `/sys/fs/bpf/coregate`
-- the tracer captures up to 32 raw user-space return addresses keyed by global pid/tgid
-- `coregate` reads and deletes the stack entry after a successful lookup
-- stack records now carry:
-  - best-effort live `blazesym` symbols for the crashing process
-  - normalized file-offset metadata suitable for later remote/file-based symbolization
-- remote symbolization can be enabled with:
-  - `"symbolizer": { "mode": "http", "http": { "url": "...", "timeout_ms": 3000 } }`
-- the remote service is expected to symbolize normalized file offsets, for example with `blazesym`
-- the HTTP body uses protobuf-generated message types serialized as JSON
-- the shared schema lives in `crates/symbolizer-proto/proto/symbolizer.proto`
+- the collector binary needs `--features coregate/bpf` for crash-record stack enrichment
+- stack records carry best-effort live `blazesym` symbols and normalized file-offset metadata
 - debuginfod-backed symbolization can be enabled with:
   - `"symbolizer": { "mode": "debuginfod" }`
 - debuginfod mode uses the standard debuginfod client settings:
   - `DEBUGINFOD_URLS` for server URLs
   - `DEBUGINFOD_CACHE_PATH` for an explicit cache path
   - otherwise the platform cache directory, typically `~/.cache/debuginfod_client`
-- current validation was done on Linux `6.6.87.2-microsoft-standard-WSL2`
+- remote HTTP symbolization can be enabled with:
+  - `"symbolizer": { "mode": "http", "http": { "url": "...", "timeout_ms": 3000 } }`
 
 Remote HTTP contract:
 
-- request:
-  - `provider`
-  - `process`
-    - `pid`
-    - `arch`
-    - `exe`
-    - `build_id`
-  - `modules[]`
-    - `id`
-    - `path`
-    - `build_id`
-    - `start`
-    - `end`
-    - `file_offset`
-    - `perms`
-  - `frames[]`
-    - `addr`
-    - `normalized`
-      - `kind`
-      - `file_offset`
-      - `module_id`
-      - `path`
-      - `build_id`
-      - `reason`
-- response:
-  - `frames[]`
-    - `symbol`
-    - `module`
-    - `offset`
-    - `file`
-    - `line`
-    - `column`
-    - `reason`
+- request fields: `provider`, `process`, `modules[]`, `frames[]`
+- response fields: `frames[]` with `symbol`, `module`, `offset`, `file`, `line`, `column`, and `reason`
+- the HTTP body uses protobuf-generated message types serialized as JSON
+- the shared schema lives in `crates/symbolizer-proto/proto/symbolizer.proto`
 
 ## VM Tests
 

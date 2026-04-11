@@ -1,7 +1,7 @@
 target/
 
 # Bazel
-bazel-.*
+bazel-*
 
 # Local caches and debug artifacts
 .cache/
