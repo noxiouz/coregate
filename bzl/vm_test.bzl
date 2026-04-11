@@ -178,12 +178,13 @@ _vm_test = rule(
 #   2. Wrap with _vm_test
 # ---------------------------------------------------------------------------
 
-def _merge_manual_tag(kwargs):
-    """Ensure the inner test target has 'manual' tag so it isn't run directly."""
+def _split_test_tags(kwargs):
+    """Return wrapper tags and inner tags, keeping the inner target manual."""
     tags = list(kwargs.pop("tags", []))
-    if "manual" not in tags:
-        tags.append("manual")
-    return tags
+    inner_tags = list(tags)
+    if "manual" not in inner_tags:
+        inner_tags.append("manual")
+    return tags, inner_tags
 
 def vm_test(name, vm_host, test, timeout_secs = 300, guest_setup = "", data = [], **kwargs):
     """Generic vm_test — wraps an existing executable to run inside a VM."""
@@ -200,7 +201,7 @@ def vm_test(name, vm_host, test, timeout_secs = 300, guest_setup = "", data = []
 def vm_rust_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [], **kwargs):
     """Builds a rust_test, then runs it inside a QEMU VM."""
     inner_name = name + "_vm_inner"
-    inner_tags = _merge_manual_tag(kwargs)
+    wrapper_tags, inner_tags = _split_test_tags(kwargs)
     rust_test(
         name = inner_name,
         tags = inner_tags,
@@ -213,6 +214,7 @@ def vm_rust_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [],
         timeout_secs = timeout_secs,
         guest_setup = guest_setup,
         data = data,
+        tags = wrapper_tags,
     )
 
 def vm_python_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [], **kwargs):
@@ -228,7 +230,7 @@ def vm_python_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [
             until vmtest copies Bazel runfiles into the guest.
     """
     inner_name = name + "_vm_inner"
-    inner_tags = _merge_manual_tag(kwargs)
+    wrapper_tags, inner_tags = _split_test_tags(kwargs)
 
     srcs = kwargs.pop("srcs", [])
     if not srcs:
@@ -258,12 +260,13 @@ def vm_python_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [
         timeout_secs = timeout_secs,
         guest_setup = guest_setup,
         data = data + srcs,
+        tags = wrapper_tags,
     )
 
 def vm_sh_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [], **kwargs):
     """Builds a sh_test, then runs it inside a QEMU VM."""
     inner_name = name + "_vm_inner"
-    inner_tags = _merge_manual_tag(kwargs)
+    wrapper_tags, inner_tags = _split_test_tags(kwargs)
     sh_test(
         name = inner_name,
         tags = inner_tags,
@@ -276,4 +279,5 @@ def vm_sh_test(name, vm_host, timeout_secs = 300, guest_setup = "", data = [], *
         timeout_secs = timeout_secs,
         guest_setup = guest_setup,
         data = data,
+        tags = wrapper_tags,
     )

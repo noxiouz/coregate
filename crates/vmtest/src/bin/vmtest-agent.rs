@@ -152,10 +152,14 @@ fn run_scenario(
             ));
         }
         VmIngressMode::Server => {
-            setup_command.push_str(" && rm -f /var/lib/coregate/serve.log");
+            setup_command.push_str(
+                " && rm -f /var/lib/coregate/serve.log && /usr/local/bin/coregate setup server --apply",
+            );
         }
         VmIngressMode::ServerLegacy => {
-            setup_command.push_str(" && rm -f /var/lib/coregate/serve.log");
+            setup_command.push_str(
+                " && rm -f /var/lib/coregate/serve.log && /usr/local/bin/coregate setup server-legacy --apply",
+            );
         }
     }
     if let Some(extra_setup) = extra_setup {
@@ -258,9 +262,6 @@ fn start_server_mode(mode: VmIngressMode) -> Result<Child> {
     let mut child = command
         .arg("--config")
         .arg("/etc/coregate/config.json")
-        .arg("--apply-sysctl")
-        .arg("--core-pipe-limit")
-        .arg("16")
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err))

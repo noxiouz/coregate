@@ -1,7 +1,7 @@
 load("//bzl:vm_host.bzl", "vm_host")
-load("//bzl:vm_kernel.bzl", "vm_kernel_from_image")
+load("//bzl:vm_kernel.bzl", "vm_kernel_from_guest_packages", "vm_kernel_from_image")
 load("//bzl:vm_test.bzl", "vm_python_test", "vm_sh_test")
-load(":defs.bzl", "HANDLE_DATA", "VM_TAGS", "handle_guest_setup")
+load(":defs.bzl", "HANDLE_DATA", "VM_TAGS", "handle_guest_setup", "server_guest_setup")
 
 # ---------------------------------------------------------------------------
 # VM host targets
@@ -9,7 +9,7 @@ load(":defs.bzl", "HANDLE_DATA", "VM_TAGS", "handle_guest_setup")
 
 genrule(
     name = "coregate_guest",
-    srcs = ["//crates/coregate:coregate_guest"],
+    srcs = ["//:coregate_guest"],
     outs = ["coregate"],
     cmd = "cp $< $@",
 )
@@ -19,6 +19,7 @@ genrule(
 vm_kernel_from_image(
     name = "debian12_kernel",
     image = "@debian12_vm_image//file",
+    tags = ["manual"],
 )
 
 # Boot from disk (GRUB inside the qcow2).
@@ -37,6 +38,28 @@ vm_host(
     vm_kernel = ":debian12_kernel",
     memory_mib = 2048,
     cpus = 2,
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
+vm_kernel_from_guest_packages(
+    name = "linux_6_19_kernel",
+    image = "@debian12_vm_image//file",
+    mainline_tag = "v6.19",
+    kernel_release = "6.19.0-061900-generic",
+    package_version = "6.19.0-061900.202602082231",
+    tags = ["manual"],
+)
+
+# Direct boot with Linux 6.19 kernel+initrd produced by Bazel from the
+# Debian rootfs plus Ubuntu mainline kernel packages.
+vm_host(
+    name = "debian12_linux_6_19",
+    image = "@debian12_vm_image//file",
+    vm_kernel = ":linux_6_19_kernel",
+    memory_mib = 2048,
+    cpus = 2,
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )
 
@@ -107,19 +130,34 @@ vm_python_test(
 )
 
 # ---------------------------------------------------------------------------
-# Scenarios — server modes (require 6.16+ / 6.19+ kernel)
+# Scenarios — server modes (tested on Linux 6.19)
 # ---------------------------------------------------------------------------
-# server_segv and server_legacy_segv require explicit kernel/initrd with
-# the relevant socket API. Use debian12_direct or a custom vm_host with
-# a 6.16+ kernel. These are commented out until a suitable kernel is
-# available in CI.
 
-# vm_python_test(
-#     name = "server_legacy_segv",
-#     srcs = ["test_server_legacy_segv.py"],
-#     vm_host = ":debian12_direct",
-#     ...
-# )
+vm_python_test(
+    name = "server_segv",
+    srcs = ["test_server_segv.py"],
+    vm_host = ":debian12_linux_6_19",
+    data = HANDLE_DATA + ["coregate_assertions.py"],
+    guest_setup = server_guest_setup(
+        "server",
+        "/usr/local/bin/victim-crash segv || true",
+    ),
+    timeout_secs = 300,
+    tags = VM_TAGS,
+)
+
+vm_python_test(
+    name = "server_legacy_segv",
+    srcs = ["test_server_legacy_segv.py"],
+    vm_host = ":debian12_linux_6_19",
+    data = HANDLE_DATA + ["coregate_assertions.py"],
+    guest_setup = server_guest_setup(
+        "server-legacy",
+        "/usr/local/bin/victim-crash segv || true",
+    ),
+    timeout_secs = 300,
+    tags = VM_TAGS,
+)
 
 # ---------------------------------------------------------------------------
 # Smoke test (shell)

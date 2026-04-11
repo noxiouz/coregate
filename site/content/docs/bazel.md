@@ -19,15 +19,15 @@ Bazel is used for hermetic builds, VM-based integration tests, and CI.
 bazel build //...
 
 # Build the main binary
-bazel build //crates/coregate:coregate
+bazel build //:coregate
 
 # Build the guest/static variant used by VM tests
-bazel build --config=musl //crates/coregate:coregate_guest
+bazel build --config=musl //:coregate_guest
 ```
 
 The Bazel `coregate` target enables the default SQLite metadata path and keeps
-collector-side BPF readout disabled. Build the separate `coregate-bpf` target
-when you need the BPF loader.
+collector-side BPF readout disabled. BPF stack support is opt-in and tagged
+`manual` so `bazel build //...` does not build `libbpf-sys`.
 
 The `coregate_guest` target disables SQLite for now. That keeps the VM guest
 binary fully static without needing a musl C toolchain for bundled SQLite.
@@ -70,7 +70,7 @@ The musl config produces fully static `x86_64-unknown-linux-musl` Rust
 binaries when the target does not need host-built C objects:
 
 ```bash
-bazel build --config=musl //crates/coregate:coregate_guest
+bazel build --config=musl //:coregate_guest
 bazel build --config=musl //crates/vmtest:vmtest-agent
 ```
 
@@ -81,14 +81,29 @@ rules_rust musl repository set in `MODULE.bazel`, and `.bazelrc`'s
 Bazel VM tests apply this guest platform automatically to guest-side labels.
 The host-side `vmtest` runner stays in exec configuration.
 
+QEMU-backed VM tests are tagged `manual`, so default `bazel test //...` does
+not require KVM or downloaded VM images. Run a scenario explicitly when needed:
+
+```bash
+bazel test //tests/vm:core_pattern_segv --test_output=streamed
+bazel test //tests/vm:server_segv //tests/vm:server_legacy_segv --test_output=errors
+```
+
+The socket-mode targets use `//tests/vm:linux_6_19_kernel`, which Bazel
+generates from the Debian rootfs with `vm_kernel_from_guest_packages`. The rule
+boots the rootfs, installs the requested Ubuntu mainline kernel packages, runs
+`update-initramfs`, and exports declared `vmlinuz`/`initrd` outputs for direct
+QEMU boot. Do not replace this with `.cache/` source inputs.
+
 ## Crate targets
 
 | Crate | Target | Type |
 |-------|--------|------|
-| `crates/coregate` | `//crates/coregate:coregate` | binary + library |
-| `crates/coregate` | `//crates/coregate:coregate_guest` | no-SQLite VM guest binary |
-| `crates/bpf-stack` | `//crates/bpf-stack:coregate-bpf-stack` | library |
-| `crates/bpf-loader` | `//crates/bpf-loader:coregate-bpf` | binary |
+| root package | `//:coregate` | shipped binary |
+| root package | `//:coregate_guest` | no-SQLite VM guest binary |
+| `crates/coregate` | `//crates/coregate:coregate_lib` | reusable library |
+| `crates/coregate-cli` | `//crates/coregate-cli:coregate_cli_lib` | reusable CLI front-end |
+| `crates/bpf-stack` | `//crates/bpf-stack:coregate-bpf-stack` | optional/manual library |
 | `crates/symbolizer-proto` | `//crates/symbolizer-proto` | library |
 | `crates/vmtest` | `//crates/vmtest:vmtest` | harness binary + library |
 | `crates/vmtest` | `//crates/vmtest:vmtest-agent` | guest agent binary |

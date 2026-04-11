@@ -1,6 +1,6 @@
 load("@crates//:defs.bzl", "aliases", "all_crate_deps", "crate_deps")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library")
 
 cargo_build_script(
     name = "build_script",
@@ -38,25 +38,12 @@ rust_library(
         "prost",
         "serde",
         "serde_json",
+        "tokio",
         "xz2",
         "zstd",
     ]) + [
         ":build_script",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
-    visibility = ["//visibility:public"],
-)
-
-rust_binary(
-    name = "coregate",
-    srcs = ["src/bin/coregate.rs"],
-    deps = [":coregate_lib"],
-    visibility = ["//visibility:public"],
-)
-
-rust_binary(
-    name = "coregate_guest",
-    srcs = ["src/bin/coregate.rs"],
-    deps = [":coregate_lib_guest"],
     visibility = ["//visibility:public"],
 )

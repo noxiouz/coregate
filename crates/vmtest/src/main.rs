@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-use vmtest::{RunTestOptions, fetch_debian_image, run_test};
+use vmtest::{PrepareKernelOptions, RunTestOptions, fetch_debian_image, prepare_kernel, run_test};
 
 #[derive(Debug, Parser)]
 #[command(name = "vmtest")]
@@ -16,6 +16,8 @@ enum Commands {
     FetchDebianImage(FetchDebianImageArgs),
     /// Run an arbitrary test binary inside a QEMU VM.
     RunTest(RunTestArgs),
+    /// Install kernel packages in a guest rootfs and export kernel+initrd.
+    PrepareKernel(PrepareKernelArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -87,6 +89,45 @@ struct RunTestArgs {
     workdir: Option<PathBuf>,
 }
 
+#[derive(Debug, Parser)]
+struct PrepareKernelArgs {
+    /// Path to the VM disk image (qcow2).
+    #[arg(long)]
+    image: PathBuf,
+
+    /// Path to the vmtest-agent binary to inject into the VM.
+    #[arg(long)]
+    agent: PathBuf,
+
+    /// Working directory for temporary files.
+    #[arg(long)]
+    workdir: Option<PathBuf>,
+
+    /// VM memory in MiB.
+    #[arg(long, default_value_t = 2048)]
+    memory_mib: u32,
+
+    /// Number of vCPUs.
+    #[arg(long, default_value_t = 2)]
+    cpus: u8,
+
+    /// Ubuntu mainline tag, for example v6.19.
+    #[arg(long)]
+    mainline_tag: String,
+
+    /// Kernel release, for example 6.19.0-061900-generic.
+    #[arg(long)]
+    kernel_release: String,
+
+    /// Ubuntu package version suffix.
+    #[arg(long)]
+    package_version: String,
+
+    /// Host output directory for vmlinuz-* and initrd.img-*.
+    #[arg(long)]
+    output_dir: PathBuf,
+}
+
 fn main() {
     let cli = Cli::parse();
     let code = match run(cli) {
@@ -129,6 +170,22 @@ fn run(cli: Cli) -> Result<i32> {
                 workdir: args.workdir,
             })?;
             Ok(result)
+        }
+        Commands::PrepareKernel(args) => {
+            let paths = prepare_kernel(PrepareKernelOptions {
+                image: args.image,
+                agent: args.agent,
+                workdir: args.workdir,
+                memory_mib: args.memory_mib,
+                cpus: args.cpus,
+                mainline_tag: args.mainline_tag,
+                kernel_release: args.kernel_release,
+                package_version: args.package_version,
+                output_dir: args.output_dir,
+            })?;
+            println!("kernel={}", paths.kernel.display());
+            println!("initrd={}", paths.initrd.display());
+            Ok(0)
         }
     }
 }

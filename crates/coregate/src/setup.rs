@@ -315,6 +315,12 @@ mod tests {
     }
 
     #[test]
+    fn renders_server_legacy_setup_pattern() {
+        let pattern = render_server_legacy_pattern(None).unwrap();
+        assert_eq!(pattern, "@/run/coregate-coredump.socket");
+    }
+
+    #[test]
     fn renders_server_setup_pattern_in_shell_form() {
         let args = SetupArgs {
             mode: SetupMode::Server,
@@ -328,6 +334,22 @@ mod tests {
         let pattern = render_server_pattern(args.socket_address.as_deref()).unwrap();
         let rendered = render_rendered_setup(&args, &pattern);
         assert!(rendered.contains("kernel.core_pattern='@@/run/coregate-coredump.socket'"));
+    }
+
+    #[test]
+    fn renders_server_legacy_setup_pattern_in_shell_form() {
+        let args = SetupArgs {
+            mode: SetupMode::ServerLegacy,
+            coregate_path: Some(PathBuf::from("/opt/coregate/bin/coregate")),
+            config: PathBuf::from("/etc/coregate/config.json"),
+            socket_address: Some("@/run/coregate-coredump.socket".to_string()),
+            core_pipe_limit: 16,
+            output: SetupOutput::Shell,
+            apply: false,
+        };
+        let pattern = render_server_legacy_pattern(args.socket_address.as_deref()).unwrap();
+        let rendered = render_rendered_setup(&args, &pattern);
+        assert!(rendered.contains("kernel.core_pattern='@/run/coregate-coredump.socket'"));
     }
 
     #[test]

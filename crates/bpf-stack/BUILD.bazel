@@ -10,5 +10,6 @@ rust_library(
         "//crates/symbolizer-proto:coregate-symbolizer-proto",
     ],
     proc_macro_deps = all_crate_deps(proc_macro = True),
+    tags = ["manual"],
     visibility = ["//visibility:public"],
 )

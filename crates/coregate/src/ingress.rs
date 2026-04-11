@@ -436,3 +436,105 @@ fn coredump_signal_from_info(info: &CoregatePidfdInfo) -> Option<i32> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_server_and_legacy_socket_addresses() {
+        assert_eq!(
+            protocol_server_socket_path("@@/run/coregate.sock")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("/run/coregate.sock")
+        );
+        assert_eq!(
+            legacy_server_socket_path("@/run/coregate.sock")
+                .unwrap()
+                .unwrap(),
+            PathBuf::from("/run/coregate.sock")
+        );
+    }
+
+    #[test]
+    fn keeps_server_socket_protocols_distinct() {
+        assert!(
+            protocol_server_socket_path("@/run/coregate.sock")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            legacy_server_socket_path("@@/run/coregate.sock")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_socket_addresses_with_whitespace() {
+        assert!(protocol_server_socket_path("@@/run/coregate sock").is_err());
+        assert!(legacy_server_socket_path("@/run/coregate sock").is_err());
+    }
+
+    #[test]
+    fn validates_coredump_protocol_request() {
+        let req = CoredumpReq {
+            size: COREDUMP_REQ_SIZE_VER0,
+            size_ack: COREDUMP_ACK_SIZE_VER0,
+            mask: COREDUMP_KERNEL | COREDUMP_USERSPACE | COREDUMP_REJECT | COREDUMP_WAIT,
+        };
+        validate_coredump_req(&req).unwrap();
+
+        let missing_wait = CoredumpReq {
+            mask: COREDUMP_KERNEL | COREDUMP_USERSPACE | COREDUMP_REJECT,
+            ..req
+        };
+        assert!(validate_coredump_req(&missing_wait).is_err());
+
+        let undersized = CoredumpReq {
+            size: COREDUMP_REQ_SIZE_VER0 - 1,
+            ..req
+        };
+        assert!(validate_coredump_req(&undersized).is_err());
+    }
+
+    #[tokio::test]
+    async fn writes_protocol_ack_for_server_mode() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let req = CoredumpReq {
+            size: COREDUMP_REQ_SIZE_VER0,
+            size_ack: COREDUMP_ACK_SIZE_VER0,
+            mask: COREDUMP_KERNEL | COREDUMP_USERSPACE | COREDUMP_REJECT | COREDUMP_WAIT,
+        };
+
+        send_coredump_ack(&mut server, &req, COREDUMP_KERNEL | COREDUMP_WAIT)
+            .await
+            .unwrap();
+
+        let mut size = [0u8; 4];
+        let mut spare = [0u8; 4];
+        let mut mask = [0u8; 8];
+        client.read_exact(&mut size).await.unwrap();
+        client.read_exact(&mut spare).await.unwrap();
+        client.read_exact(&mut mask).await.unwrap();
+        assert_eq!(u32::from_ne_bytes(size), COREDUMP_ACK_SIZE_VER0);
+        assert_eq!(u32::from_ne_bytes(spare), 0);
+        assert_eq!(u64::from_ne_bytes(mask), COREDUMP_KERNEL | COREDUMP_WAIT);
+    }
+
+    #[tokio::test]
+    async fn rejects_unsupported_protocol_ack_bits() {
+        let (_client, mut server) = UnixStream::pair().unwrap();
+        let req = CoredumpReq {
+            size: COREDUMP_REQ_SIZE_VER0,
+            size_ack: COREDUMP_ACK_SIZE_VER0,
+            mask: COREDUMP_KERNEL,
+        };
+
+        let err = send_coredump_ack(&mut server, &req, COREDUMP_KERNEL | COREDUMP_WAIT)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("exceeds kernel-supported mask"));
+    }
+}

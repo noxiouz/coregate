@@ -1,7 +1,31 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
 exports_files([
     "Cargo.toml",
     "Cargo.lock",
 ])
+
+rust_binary(
+    name = "coregate",
+    srcs = ["bin/coregate.rs"],
+    deps = [
+        "//crates/coregate:coregate_lib",
+        "//crates/coregate-cli:coregate_cli_lib",
+        "@crates//:anyhow",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "coregate_guest",
+    srcs = ["bin/coregate.rs"],
+    deps = [
+        "//crates/coregate:coregate_lib_guest",
+        "//crates/coregate-cli:coregate_cli_lib_guest",
+        "@crates//:anyhow",
+    ],
+    visibility = ["//visibility:public"],
+)
 
 constraint_setting(
     name = "libc",

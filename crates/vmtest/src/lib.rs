@@ -193,6 +193,146 @@ pub struct GuestCommandResult {
     pub stderr: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct PrepareKernelOptions {
+    pub image: PathBuf,
+    pub agent: PathBuf,
+    pub workdir: Option<PathBuf>,
+    pub memory_mib: u32,
+    pub cpus: u8,
+    pub mainline_tag: String,
+    pub kernel_release: String,
+    pub package_version: String,
+    pub output_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedKernelPaths {
+    pub kernel: PathBuf,
+    pub initrd: PathBuf,
+}
+
+/// Build a mainline kernel/initrd pair from inside the guest rootfs.
+///
+/// The guest installs the requested kernel packages, runs `update-initramfs`
+/// against that rootfs, then streams `/boot/vmlinuz-*` and `/boot/initrd.img-*`
+/// back to the host. This keeps the initrd matched to the Debian image used by
+/// VM tests while still producing declared host-side artifacts.
+pub fn prepare_kernel(opts: PrepareKernelOptions) -> Result<PreparedKernelPaths> {
+    let modules_pkg = format!(
+        "linux-modules-{}_{}_amd64.deb",
+        opts.kernel_release, opts.package_version
+    );
+    let image_pkg = format!(
+        "linux-image-unsigned-{}_{}_amd64.deb",
+        opts.kernel_release, opts.package_version
+    );
+
+    let guest_setup = format!(
+        r#"
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y curl ca-certificates initramfs-tools kmod wireless-regdb
+cat >> /etc/initramfs-tools/modules <<'EOF'
+virtio_blk
+virtio_pci
+virtio_net
+fat
+vfat
+nls_cp437
+nls_iso8859_1
+EOF
+tmp=/root/mainline-kernel
+mkdir -p "$tmp"
+cd "$tmp"
+base=https://kernel.ubuntu.com/mainline/{mainline_tag}/amd64
+curl -fLO "$base/{modules_pkg}"
+curl -fLO "$base/{image_pkg}"
+dpkg -i {modules_pkg} {image_pkg}
+update-initramfs -c -k {kernel_release}
+test -f /boot/vmlinuz-{kernel_release}
+test -f /boot/initrd.img-{kernel_release}
+"#,
+        mainline_tag = opts.mainline_tag,
+        modules_pkg = modules_pkg,
+        image_pkg = image_pkg,
+        kernel_release = opts.kernel_release
+    )
+    .trim()
+    .to_string();
+
+    let dump_command = format!(
+        r#"
+set -euo pipefail
+echo "__COREGATE_KERNEL_BEGIN__"
+base64 -w0 /boot/vmlinuz-{kernel_release}
+echo
+echo "__COREGATE_KERNEL_END__"
+echo "__COREGATE_INITRD_BEGIN__"
+base64 -w0 /boot/initrd.img-{kernel_release}
+echo
+echo "__COREGATE_INITRD_END__"
+"#,
+        kernel_release = opts.kernel_release
+    )
+    .trim()
+    .to_string();
+
+    let result = run_guest_command(GuestCommandOptions {
+        image: opts.image,
+        kernel: None,
+        initrd: None,
+        append: None,
+        agent: opts.agent,
+        memory_mib: opts.memory_mib,
+        cpus: opts.cpus,
+        timeout_secs: 1800,
+        guest_setup: None,
+        extra_files: Vec::new(),
+        workdir: opts.workdir,
+        command: format!("{guest_setup}\n{dump_command}"),
+    })?;
+
+    if result.exit_code != 0 {
+        bail!(
+            "guest prepare-kernel command failed with exit {}:\n{}",
+            result.exit_code,
+            result.stderr
+        );
+    }
+
+    fs::create_dir_all(&opts.output_dir)
+        .with_context(|| format!("create {}", opts.output_dir.display()))?;
+    let kernel_path = opts
+        .output_dir
+        .join(format!("vmlinuz-{}", opts.kernel_release));
+    let initrd_path = opts
+        .output_dir
+        .join(format!("initrd.img-{}", opts.kernel_release));
+
+    let kernel_b64 = extract_section(
+        &result.stdout,
+        "__COREGATE_KERNEL_BEGIN__",
+        "__COREGATE_KERNEL_END__",
+    )
+    .context("extract kernel payload")?;
+    let initrd_b64 = extract_section(
+        &result.stdout,
+        "__COREGATE_INITRD_BEGIN__",
+        "__COREGATE_INITRD_END__",
+    )
+    .context("extract initrd payload")?;
+
+    decode_base64_to_file(kernel_b64, &kernel_path)?;
+    decode_base64_to_file(initrd_b64, &initrd_path)?;
+
+    Ok(PreparedKernelPaths {
+        kernel: kernel_path,
+        initrd: initrd_path,
+    })
+}
+
 /// Boot a VM, copy the test binary in, execute it, return its exit code.
 pub fn run_test(opts: RunTestOptions) -> Result<i32> {
     let command = format!(
@@ -864,6 +1004,39 @@ fn run(cmd: &mut Command) -> Result<Output> {
             String::from_utf8_lossy(&output.stderr)
         ))
     }
+}
+
+fn extract_section<'a>(text: &'a str, begin: &str, end: &str) -> Result<&'a str> {
+    let start = text
+        .find(begin)
+        .with_context(|| format!("missing marker {begin}"))?;
+    let after_start = &text[start + begin.len()..];
+    let after_start = after_start.strip_prefix('\n').unwrap_or(after_start);
+    let end_idx = after_start
+        .find(end)
+        .with_context(|| format!("missing marker {end}"))?;
+    Ok(after_start[..end_idx].trim())
+}
+
+fn decode_base64_to_file(payload: &str, path: &Path) -> Result<()> {
+    let payload_path = path.with_extension("b64.tmp");
+    fs::write(&payload_path, payload)
+        .with_context(|| format!("write {}", payload_path.display()))?;
+    let output = Command::new("base64")
+        .arg("-d")
+        .arg(&payload_path)
+        .output()
+        .context("run base64 decoder")?;
+    if !output.status.success() {
+        let _ = fs::remove_file(&payload_path);
+        bail!(
+            "base64 decoder failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    fs::write(path, output.stdout).with_context(|| format!("write {}", path.display()))?;
+    fs::remove_file(&payload_path).with_context(|| format!("remove {}", payload_path.display()))?;
+    Ok(())
 }
 
 fn shutdown_qemu(child: &mut Child) {

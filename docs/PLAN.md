@@ -32,10 +32,10 @@ Last updated: 2026-04-11
 - scenario-driven Rust integration tests in `vmtest-scenarios`
 - `xtask` wrapper for fetching images, building guest tools, listing scenarios, and running VM tests
 - Bazel build targets for the main binary, BPF crates, VM harness, and VM scenario tests
+- Bazel-generated Linux 6.19 kernel/initrd pair for socket-mode VM tests
 
 ### In Progress
 
-- expanding VM scenario coverage for edge cases and newer kernel protocols
 - expanding VM scenario coverage for edge cases and newer kernel protocols
 - keeping the VM harness isolated enough to move into a reusable repo later
 - validating BPF capture and symbolization behavior across kernel versions
@@ -149,8 +149,13 @@ limiters, config sources, and symbolizers can perform real async I/O.
   targets to `//:linux_x86_64_musl`; the host-side VM runner stays in exec
   config
 - Bazel Python VM tests are source-only and run via guest `/usr/bin/python3`
-- Bazel handle-mode VM tests use a no-SQLite `coregate_guest` build until a
+- Bazel handle-mode VM tests use a no-SQLite `//:coregate_guest` build until a
   musl C toolchain is wired for bundled SQLite
+- Bazel socket-mode VM tests use `vm_kernel_from_guest_packages` to produce a
+  Linux 6.19 kernel/initrd from the Debian rootfs by installing Ubuntu mainline
+  kernel packages inside a VM action and exporting declared outputs
+- Bazel VM scenarios are tagged `manual` so default `bazel test //...` does not
+  require QEMU/KVM; run specific `//tests/vm:*` targets explicitly
 
 ## Roadmap
 
@@ -159,7 +164,8 @@ limiters, config sources, and symbolizers can perform real async I/O.
 Status: in progress
 
 - add more VM scenarios for edge cases such as rate limiting and package lookup
-- expand socket-mode scenario coverage against 6.16+ and 6.19+ kernels
+- expand socket-mode scenario coverage beyond the current 6.19 `server` and
+  `server-legacy` smoke tests
 - improve artifact reporting from failed VM runs
 
 ### Phase 2: Add Richer Crash Metadata

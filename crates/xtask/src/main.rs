@@ -217,19 +217,33 @@ fn ensure_success(status: ExitStatus) -> Result<()> {
 }
 
 fn build_guest_tools() -> Result<()> {
-    let status = Command::new("cargo")
+    // The shipped collector binary lives in the root package, not in the
+    // reusable `coregate` library crate. Build it explicitly so VM tests never
+    // reuse a stale target/coregate binary from the old layout.
+    let collector_status = Command::new("cargo")
         .arg("build")
         .arg("--target")
         .arg(DEFAULT_GUEST_TARGET)
         .arg("-p")
+        .arg("coregate-bin")
+        .arg("--bin")
         .arg("coregate")
+        .env("CC_x86_64_unknown_linux_musl", "musl-gcc")
+        .status()
+        .context("build coregate guest binary for musl target")?;
+    ensure_success(collector_status)?;
+
+    let vmtest_status = Command::new("cargo")
+        .arg("build")
+        .arg("--target")
+        .arg(DEFAULT_GUEST_TARGET)
         .arg("-p")
         .arg("vmtest")
         .arg("--bins")
         .env("CC_x86_64_unknown_linux_musl", "musl-gcc")
         .status()
-        .context("build guest binaries for musl target")?;
-    ensure_success(status)
+        .context("build vmtest guest binaries for musl target")?;
+    ensure_success(vmtest_status)
 }
 
 fn prepare_kernel(args: PrepareKernelArgs) -> Result<()> {
